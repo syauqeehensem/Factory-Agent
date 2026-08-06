@@ -5,9 +5,8 @@ the conversation so far and decides which specialist should act next, or that th
 job is done. Each specialist node runs its ReAct agent, appends a summary to the
 shared messages, and routes **back to the supervisor** — that loop is the cycle:
 
-    START → supervisor ─(conditional)→ maintenance_scheduler ─→ supervisor
-                       └───────────────→ yield_specialist ───────→ supervisor
-                       └───────────────→ parts_procurement ────→ supervisor
+    START → supervisor ─(conditional)→ agent_technician ─→ supervisor
+                       └───────────────→ agent_yield ─────────→ supervisor
                        └──"FINISH"──────────────────────────────→ END
 
 The supervisor uses *structured output* so its routing choice is a typed value,
@@ -24,66 +23,93 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "factory_agent"
 
-from typing import Any, Literal, TypedDict
+from typing import Any
 
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 
 from .agents import (
-    build_maintenance_agent,
-    build_procurement_agent,
-    build_yield_specialist_agent,
+    build_technician_agent,
+    build_yield_agent,
 )
 from .llm import build_chat_model
 from .state import FactoryState
 
 # The agents the supervisor can delegate to (plus the FINISH sentinel).
-WORKERS = ["maintenance_scheduler", "yield_specialist", "parts_procurement"]
+WORKERS = ["agent_technician", "agent_yield"]
 _ROUTE_OPTIONS = WORKERS + ["FINISH"]
 
+TECH_KEYWORDS = {
+    "status",
+    "ticket",
+    "down",
+    "up",
+    "entity",
+    "tsx",
+    "tcb",
+    "manual",
+    "technician",
+    "troubleshoot",
+    "fault",
+    "error",
+    "vision",
+}
 
-class Router(TypedDict):
-    """The Floor Supervisor's typed routing decision."""
-
-    next: Literal["maintenance_scheduler", "yield_specialist", "parts_procurement", "FINISH"]
-    reason: str
-
-
-SUPERVISOR_PROMPT = (
-    "You are the Floor Supervisor orchestrating a maintenance response. You manage "
-    "three specialists:\n"
-    "- maintenance_scheduler: triages alerts, creates and schedules work orders.\n"
-    "- yield_specialist: analyzes historical/project yield data by machine/tool code.\n"
-    "- parts_procurement: checks inventory and orders parts.\n\n"
-    "Given the conversation so far, decide who should act NEXT to move the task "
-    "forward, or answer FINISH when the issue is fully handled.\n"
-    "Typical flow: maintenance_scheduler diagnoses and raises/schedules the work "
-    "order (noting the part needed) → yield_specialist checks if yield evidence "
-    "suggests an isolated vs systematic issue → parts_procurement ensures the needed "
-    "part is in stock or ordered → FINISH.\n"
-    "Conversation behavior:\n"
-    "- Speak in a calm, colleague-like tone; avoid robotic template wording.\n"
-    "- Keep continuity with prior turns and avoid repeating already-settled decisions.\n"
-    "- Prefer concise routing choices with practical reasons.\n"
-    "- If the user asks about TSX/TCB line entities, prefer maintenance_scheduler first "
-    "so it can use Project Data status/ticket tools before deeper delegation.\n"
-    "- If the user asks a broad follow-up, delegate to the best next specialist rather than restarting the entire flow.\n"
-    "Do not pick an agent that has already completed its part. Choose FINISH once a "
-    "work order is scheduled, yield assessment is complete when relevant, AND the "
-    "required part is in stock or on order (or is blocked pending your approval)."
-)
+YIELD_KEYWORDS = {
+    "yield",
+    "lot",
+    "baseline",
+    "hotspot",
+    "trend",
+    "scrap",
+    "loss",
+    "codeqty",
+    "oldqty",
+    "prodgroup",
+}
 
 
-def _supervisor_node(model):
-    """Create the supervisor node function bound to a model."""
-    router_model = model.with_structured_output(Router)
+def _contains_any(text: str, words: set[str]) -> bool:
+    lowered = text.lower()
+    return any(w in lowered for w in words)
+
+
+def _supervisor_node():
+    """Create a fast deterministic supervisor to avoid routing loops."""
 
     def supervisor(state: FactoryState) -> dict:
-        decision = router_model.invoke(
-            [SystemMessage(content=SUPERVISOR_PROMPT), *state["messages"]]
-        )
-        nxt = decision["next"]
-        note = f"[Floor Supervisor] → {nxt}: {decision['reason']}"
+        messages = state["messages"]
+        latest_user = ""
+        latest_user_idx = -1
+        for idx in range(len(messages) - 1, -1, -1):
+            msg = messages[idx]
+            if getattr(msg, "type", "") == "human":
+                latest_user_idx = idx
+                latest_user = str(getattr(msg, "content", ""))
+                break
+
+        turn_messages = messages[latest_user_idx + 1 :] if latest_user_idx >= 0 else []
+
+        answered_by = {
+            getattr(msg, "name", "")
+            for msg in turn_messages
+            if getattr(msg, "type", "") == "ai"
+        }
+
+        wants_tech = _contains_any(latest_user, TECH_KEYWORDS)
+        wants_yield = _contains_any(latest_user, YIELD_KEYWORDS)
+
+        nxt = "FINISH"
+        reason = "No more specialist actions needed."
+
+        if "agent_technician" not in answered_by and (wants_tech or not wants_yield):
+            nxt = "agent_technician"
+            reason = "Handle line status/tickets/manual troubleshooting first."
+        elif "agent_yield" not in answered_by and wants_yield:
+            nxt = "agent_yield"
+            reason = "Add yield analysis for trend and hotspot context."
+
+        note = f"[Floor Supervisor] → {nxt}: {reason}"
         return {"next": nxt, "messages": [AIMessage(content=note, name="floor_supervisor")]}
 
     return supervisor
@@ -112,10 +138,9 @@ def build_graph(model=None, checkpointer: Any | None = None):
     model = model or build_chat_model()
 
     builder = StateGraph(FactoryState)
-    builder.add_node("supervisor", _supervisor_node(model))
-    builder.add_node("maintenance_scheduler", _worker_node(build_maintenance_agent(model), "maintenance_scheduler"))
-    builder.add_node("yield_specialist", _worker_node(build_yield_specialist_agent(model), "yield_specialist"))
-    builder.add_node("parts_procurement", _worker_node(build_procurement_agent(model), "parts_procurement"))
+    builder.add_node("supervisor", _supervisor_node())
+    builder.add_node("agent_technician", _worker_node(build_technician_agent(model), "agent_technician"))
+    builder.add_node("agent_yield", _worker_node(build_yield_agent(model), "agent_yield"))
 
     builder.add_edge(START, "supervisor")
     # Every worker hands control back to the supervisor — this forms the cycle.
@@ -125,9 +150,10 @@ def build_graph(model=None, checkpointer: Any | None = None):
     builder.add_conditional_edges(
         "supervisor",
         lambda state: state["next"],
-        {"maintenance_scheduler": "maintenance_scheduler",
-            "yield_specialist": "yield_specialist",
-         "parts_procurement": "parts_procurement",
-         "FINISH": END},
+        {
+            "agent_technician": "agent_technician",
+            "agent_yield": "agent_yield",
+            "FINISH": END,
+        },
     )
     return builder.compile(checkpointer=checkpointer)

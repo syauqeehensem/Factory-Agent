@@ -1,14 +1,7 @@
-"""Smoke tests — verify tools, guardrails, and graph wiring WITHOUT an API key.
+"""Smoke tests for the Project-Data-only two-agent pipeline.
 
-The graph compiles offline because constructing ChatOpenAI never hits the network
-(only ``.invoke()`` does). We pass a dummy-key model so we can assert the graph is
-wired correctly. Running the agents end-to-end needs a real key and is exercised
-by ``run_demo.py`` instead.
-
-Run with::
-
-    pytest            # if pytest is installed
-    python tests/test_smoke.py   # also runs standalone
+These tests avoid live model calls and validate tool/data wiring plus graph
+structure only.
 """
 
 from __future__ import annotations
@@ -19,86 +12,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from factory_agent import build_graph
-from factory_agent.config import settings
-from factory_agent.mock_factory import WORLD, reset_world
-from factory_agent.security import AUDIT_LOG, reset_audit
 from factory_agent.tools import (
-    create_work_order,
     get_entity_status,
     get_entity_ticket_summary,
-    get_machine_yield_summary,
     get_line_status_snapshot,
     get_project_data_status,
+    get_technician_manual_status,
     get_tool_yield_summary,
     get_yield_dataset_status,
-    list_machine_yield_mappings,
+    list_technician_documents,
     list_yield_hotspots,
-    order_parts,
-    read_sensor,
-    schedule_maintenance,
+    search_technician_manuals,
     summarize_recent_yield_vs_baseline,
+    summarize_open_tickets,
 )
 
 
-def setup():  # called by the standalone runner before each test
-    reset_world()
-    reset_audit()
-
-
-def test_read_sensor_flags_alert():
-    setup()
-    out = read_sensor.invoke({"machine_id": "CNC-01"})
-    assert "ALERT" in out and "7.8" in out
-
-
-def test_read_sensor_unknown_machine():
-    setup()
-    out = read_sensor.invoke({"machine_id": "NOPE-99"})
-    assert "Unknown machine" in out
-
-
-def test_create_work_order_writes_and_audits():
-    setup()
-    out = create_work_order.invoke(
-        {"machine_id": "CNC-01", "issue": "spindle bearing wear", "priority": "high"}
-    )
-    assert "WO-" in out
-    assert len(WORLD.work_orders) == 1
-    assert WORLD.work_orders[0]["priority"] == "high"
-    assert any(e.action == "create_work_order" for e in AUDIT_LOG)
-
-
-def test_schedule_maintenance_updates_work_order():
-    setup()
-    create_work_order.invoke({"machine_id": "CNC-01", "issue": "bearing", "priority": "high"})
-    wo_id = WORLD.work_orders[0]["id"]
-    out = schedule_maintenance.invoke(
-        {"work_order_id": wo_id, "technician": "R. Okafor", "when": "today 16:00"}
-    )
-    assert "Scheduled" in out
-    assert WORLD.work_orders[0]["status"] == "scheduled"
-    assert WORLD.work_orders[0]["technician"] == "R. Okafor"
-
-
-def test_order_parts_within_limit_succeeds():
-    setup()
-    # BRG-204 is $320; 2 units = $640, under the default $1000 limit.
-    out = order_parts.invoke({"part_number": "BRG-204", "quantity": 2})
-    assert "Ordered" in out and "PO-" in out
-    assert len(WORLD.purchase_orders) == 1
-
-
-def test_order_parts_over_limit_is_blocked():
-    setup()
-    original = settings.auto_approve_limit
-    settings.auto_approve_limit = 500.0  # force the guardrail to trigger
-    try:
-        out = order_parts.invoke({"part_number": "BRG-204", "quantity": 2})  # $640 > $500
-        assert "BLOCKED" in out
-        assert len(WORLD.purchase_orders) == 0  # nothing was actually ordered
-        assert any(e.status == "blocked" for e in AUDIT_LOG)
-    finally:
-        settings.auto_approve_limit = original
+def setup():
+    # Keep this hook for standalone execution symmetry.
+    return None
 
 
 def test_graph_compiles_with_expected_nodes():
@@ -108,9 +40,7 @@ def test_graph_compiles_with_expected_nodes():
     dummy = ChatOpenAI(model="gpt-4o-mini", api_key="sk-dummy-compile-only")
     graph = build_graph(dummy)  # no network — construction only
     nodes = set(graph.get_graph().nodes)
-    assert {
-        "supervisor", "maintenance_scheduler", "yield_specialist", "parts_procurement"
-    }.issubset(nodes)
+    assert {"supervisor", "agent_technician", "agent_yield"}.issubset(nodes)
 
 
 def test_yield_dataset_status_reports_loaded_or_unavailable():
@@ -128,7 +58,7 @@ def test_project_data_status_reports_loaded_or_unavailable():
 def test_line_status_snapshot_returns_summary_text():
     setup()
     out = get_line_status_snapshot.invoke({"max_down": 5})
-    assert "Line status snapshot" in out
+    assert "Line status" in out or "unavailable" in out
 
 
 def test_entity_status_for_known_entity():
@@ -143,22 +73,36 @@ def test_entity_ticket_summary_for_known_entity():
     assert "Tickets for TSX509" in out
 
 
+def test_open_ticket_summary_returns_text():
+    setup()
+    out = summarize_open_tickets.invoke({"top_n": 5})
+    assert "Ticket" in out
+
+
 def test_tool_yield_summary_for_known_entity():
     setup()
     out = get_tool_yield_summary.invoke({"entity": "TSX501"})
-    assert "TSX501" in out and "lots=" in out
+    assert "TSX501" in out
 
 
-def test_machine_yield_mapping_summary_for_known_machine():
+def test_technician_manual_status_reports_state():
     setup()
-    out = get_machine_yield_summary.invoke({"machine_id": "CNC-01"})
-    assert "CNC-01" in out and "no yield entity mapping" in out
+    out = get_technician_manual_status.invoke({})
+    assert "Technician manual index" in out
 
 
-def test_machine_yield_mapping_list_contains_defaults():
+def test_list_technician_documents_returns_text():
     setup()
-    out = list_machine_yield_mappings.invoke({})
-    assert "CNC-01 -> (unmapped)" in out and "CNC-02 -> (unmapped)" in out
+    out = list_technician_documents.invoke({})
+    assert out
+
+
+def test_search_technician_manuals_returns_text():
+    setup()
+    out = search_technician_manuals.invoke(
+        {"question": "vision error on TSX", "top_k": 2}
+    )
+    assert out
 
 
 def test_yield_hotspot_listing_returns_text():

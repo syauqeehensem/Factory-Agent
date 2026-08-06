@@ -23,8 +23,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from factory_agent import build_graph
 from factory_agent.config import settings
 from factory_agent.llm import LLMNotConfigured, build_chat_model
-from factory_agent.mock_factory import WORLD, reset_world
-from factory_agent.security import AUDIT_LOG, reset_audit
+from factory_agent.manual_data import MANUAL_INDEX
+from factory_agent.project_data import PROJECT_DATA
+from factory_agent.yield_data import YIELD_DATASET
 
 CHECKPOINTER = MemorySaver()
 
@@ -32,7 +33,7 @@ CHECKPOINTER = MemorySaver()
 class FactoryChatPopup:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Factory Agent Chat (No Streamlit)")
+        self.root.title("TCB Chatbot Desktop")
         self.root.geometry("980x680")
         self.root.minsize(760, 520)
 
@@ -45,7 +46,7 @@ class FactoryChatPopup:
         self._build_ui()
         self._reset_session(clear_chat=True)
         self._append_assistant(
-            "Ask a floor question. Commands: /world /audit /reset /quit"
+            "Ask about line status, tickets, manuals, or yield. Commands: /status /reset /quit"
         )
         self.root.after(120, self._poll_worker_results)
 
@@ -55,7 +56,7 @@ class FactoryChatPopup:
 
         header = ttk.Label(
             frame,
-            text="Factory Agent Chat",
+            text="TCB Chatbot",
             font=("Segoe UI", 15, "bold"),
         )
         header.pack(anchor="w")
@@ -83,8 +84,7 @@ class FactoryChatPopup:
 
         action_row = ttk.Frame(frame)
         action_row.pack(fill="x", pady=(8, 0))
-        ttk.Button(action_row, text="World", command=self._show_world).pack(side="left")
-        ttk.Button(action_row, text="Audit", command=self._show_audit).pack(side="left", padx=(6, 0))
+        ttk.Button(action_row, text="Data Status", command=self._show_status).pack(side="left")
         ttk.Button(action_row, text="Reset", command=self._reset_clicked).pack(side="left", padx=(6, 0))
         ttk.Button(action_row, text="Quit", command=self.root.destroy).pack(side="right")
 
@@ -103,7 +103,7 @@ class FactoryChatPopup:
         self._append("You", text, "user")
 
     def _append_assistant(self, text: str) -> None:
-        self._append("Factory Agent", text, "assistant")
+        self._append("TCB Chatbot", text, "assistant")
 
     def _append_system(self, text: str) -> None:
         self._append("System", text, "system")
@@ -127,8 +127,9 @@ class FactoryChatPopup:
             return None, f"Agent startup error: {exc}"
 
     def _reset_session(self, clear_chat: bool) -> None:
-        reset_world()
-        reset_audit()
+        PROJECT_DATA.reload()
+        YIELD_DATASET.reload()
+        MANUAL_INDEX.reload()
         self.thread_id = str(uuid4())
         self.graph, self.graph_error = self._build_graph()
         if clear_chat:
@@ -143,49 +144,30 @@ class FactoryChatPopup:
         else:
             self._set_status(f"Mode: LLM online ({settings.chat_model})")
 
-    def _show_world(self) -> None:
-        self._append_assistant(WORLD.summary())
-
-    def _show_audit(self) -> None:
-        if AUDIT_LOG:
-            text = "\n".join(str(entry) for entry in AUDIT_LOG)
-        else:
-            text = "(audit trail empty)"
-        self._append_assistant(text)
+    def _show_status(self) -> None:
+        self._append_assistant(
+            "\n".join(
+                [
+                    PROJECT_DATA.health_report(),
+                    YIELD_DATASET.status_text(),
+                    MANUAL_INDEX.status_text(),
+                ]
+            )
+        )
 
     def _reset_clicked(self) -> None:
         if self.busy:
             return
         self._reset_session(clear_chat=True)
-        self._append_system("Factory world and audit trail reset.")
-        self._append_assistant("Ask a floor question. Commands: /world /audit /reset /quit")
+        self._append_system("Conversation and data cache reset.")
+        self._append_assistant(
+            "Ask about line status, tickets, manuals, or yield. Commands: /status /reset /quit"
+        )
 
     def _offline_fixed_reply(self, question: str) -> str:
-        q = question.lower()
-        machine_match = re.search(r"\b(cnc-\d+|conv-\d+)\b", q)
-        machine_id = machine_match.group(1).upper() if machine_match else "CNC-01"
-        machine = WORLD.get_machine(machine_id) or WORLD.get_machine("CNC-01")
-
-        if machine and any(token in q for token in ["vibration", "temperature", "alert", "machine", "noise", "noisy"]):
-            r = machine.reading
-            return (
-                "Offline fixed-output mode (no API key).\n"
-                f"{machine.machine_id} status: {machine.status}\n"
-                f"Readings: vibration {r.vibration_mm_s} mm/s, temperature {r.temperature_c} C, runtime {r.runtime_hours} h.\n\n"
-                "Configured workflow in this AIMP folder:\n"
-                "1. Maintenance triages sensor + history\n"
-                "2. Yield Specialist checks historical lot/tool yield context\n"
-                "3. Maintenance creates and schedules work order\n"
-                "4. Procurement checks and orders required parts\n\n"
-                "Add OPENAI_API_KEY in .env to enable full multi-agent reasoning and actions."
-            )
-
         return (
             "Offline fixed-output mode (no API key).\n"
-            "I can still show configured workspace state:\n"
-            "- /world for factory snapshot\n"
-            "- /audit for action trail\n"
-            "- /reset to restore default scenario\n\n"
+            "I can still show configured Project Data status with /status, and you can use /reset.\n\n"
             "If OPENAI_API_KEY is present in .env, this same app switches to live agent mode."
         )
 
@@ -252,11 +234,8 @@ class FactoryChatPopup:
         if cmd in {"/quit", "/exit", "/q"}:
             self.root.destroy()
             return "break"
-        if cmd == "/world":
-            self._show_world()
-            return "break"
-        if cmd == "/audit":
-            self._show_audit()
+        if cmd == "/status":
+            self._show_status()
             return "break"
         if cmd == "/reset":
             self._reset_clicked()

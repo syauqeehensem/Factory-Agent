@@ -4,11 +4,8 @@ Run it::
 
     python cli.py
 
-Type a floor situation (e.g. "CNC-02 is overheating") and watch the team handle
-it. Commands: /world (show factory), /audit (show audit trail), /reset, /quit.
-
-The factory state persists across turns within a session, so you can follow up
-("now order a spare belt for CONV-01") and the agents see the running history.
+Type a Project Data question (status/tickets/manual/yield) and watch the two
+specialists collaborate. Commands: /reset and /quit.
 """
 
 from __future__ import annotations
@@ -22,8 +19,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from factory_agent import build_graph
 from factory_agent.config import settings
 from factory_agent.llm import LLMNotConfigured, build_chat_model
-from factory_agent.mock_factory import WORLD, reset_world
-from factory_agent.security import AUDIT_LOG, reset_audit
+from factory_agent.manual_data import MANUAL_INDEX
+from factory_agent.project_data import PROJECT_DATA
+from factory_agent.yield_data import YIELD_DATASET
 
 CHECKPOINTER = MemorySaver()
 
@@ -52,15 +50,15 @@ def _run(graph, text: str, thread_id: str) -> None:
 
 def main() -> int:
     print("=" * 64)
-    print("  Factory Agent — interactive multi-agent console")
+    print("  TCB Chatbot — interactive two-agent console")
     print("=" * 64)
     if not settings.llm_enabled:
-        print("No OPENAI_API_KEY found. Add one to .env to run the agents.\n"
-              "You can still explore with /world.")
-    print("Commands: /world  /audit  /reset  /quit\n")
+        print("No OPENAI_API_KEY found. Add one to .env to run live answers.")
+    print("Commands: /reset  /quit\n")
 
-    reset_world()
-    reset_audit()
+    PROJECT_DATA.reload()
+    YIELD_DATASET.reload()
+    MANUAL_INDEX.reload()
     thread_id = str(uuid4())
     graph = None
     if settings.llm_enabled:
@@ -80,23 +78,15 @@ def main() -> int:
         if text in {"/quit", "/exit", "/q"}:
             print("Bye!")
             return 0
-        if text == "/world":
-            print(WORLD.summary())
-            continue
-        if text == "/audit":
-            for e in AUDIT_LOG:
-                print(f"  {e}")
-            if not AUDIT_LOG:
-                print("  (audit trail empty)")
-            continue
         if text == "/reset":
-            reset_world()
-            reset_audit()
+            PROJECT_DATA.reload()
+            YIELD_DATASET.reload()
+            MANUAL_INDEX.reload()
             thread_id = str(uuid4())
-            print("Factory, audit trail, and conversation memory reset.")
+            print("Conversation memory reset.")
             continue
         if graph is None:
-            print("Agents are offline (no API key). Use /world to explore.")
+            print("Agents are offline (no API key).")
             continue
         _run(graph, text, thread_id)
         print()

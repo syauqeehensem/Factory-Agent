@@ -9,10 +9,9 @@ A *reducer* decides how each update is merged in. Here:
 * ``next`` is a plain field the Floor Supervisor sets to name the agent that
   should act next (or ``"FINISH"``). Plain fields are simply replaced.
 
-Keeping graph state this small is deliberate: the *factory's* state (machines,
-work orders, purchase orders) lives behind tools in ``mock_factory.py`` — exactly
-as it would behind real factory software. The graph carries the conversation and
-the routing decision; the tools carry the side effects.
+Keeping graph state this small is deliberate: source data lives behind tools
+that read Project Data files (status/tickets/yield/manuals). The graph carries
+the conversation and routing decision; data tools provide the evidence.
 """
 
 from __future__ import annotations

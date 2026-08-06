@@ -1,15 +1,11 @@
-"""End-to-end demo: a predictive-maintenance triage handled by the agent team.
+"""End-to-end demo: a Project-Data-only conversation handled by two agents.
 
 Run it::
 
-    python run_demo.py                         # default CNC-01 high-vibration scenario
-    python run_demo.py --ask "CONV-01 is noisy, please investigate"
-    python run_demo.py --list                  # just show the simulated factory
+    python run_demo.py                         # default line-status question
+    python run_demo.py --ask "Which entities are down and why?"
+    python run_demo.py --status                # data-source status only
     python run_demo.py --graph                 # print the graph structure (no LLM)
-
-Watch the Floor Supervisor delegate to the Maintenance Scheduler and Parts
-Procurement Agent in a loop, then see the resulting work orders, purchase orders,
-and the secure audit trail.
 """
 
 from __future__ import annotations
@@ -22,8 +18,9 @@ from langchain_core.messages import HumanMessage
 from factory_agent import build_graph
 from factory_agent.config import settings
 from factory_agent.llm import LLMNotConfigured, build_chat_model
-from factory_agent.mock_factory import WORLD, reset_world
-from factory_agent.security import AUDIT_LOG, reset_audit
+from factory_agent.manual_data import MANUAL_INDEX
+from factory_agent.project_data import PROJECT_DATA
+from factory_agent.yield_data import YIELD_DATASET
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -31,21 +28,18 @@ except (AttributeError, ValueError):  # pragma: no cover
     pass
 
 DEFAULT_SCENARIO = (
-    "Machine CNC-01 has triggered a high-vibration alert on the floor. Please triage "
-    "it and take whatever maintenance and parts actions are needed to resolve it."
+    "Which entities are DOWN now, what ticket errors are most common, and which "
+    "yield hotspots should we watch today?"
 )
 
 
-def _print_world() -> None:
-    print("Simulated factory floor:")
-    for m in WORLD.machines.values():
-        r = m.reading
-        mapping = f" | yield entity: {m.yield_entity}" if m.yield_entity else ""
-        print(f"  {m.machine_id} ({m.name}): vib {r.vibration_mm_s} mm/s, "
-              f"{r.temperature_c} C, {r.runtime_hours} h  ->  {m.status}{mapping}")
-    print("Parts inventory:")
-    for p in WORLD.parts.values():
-        print(f"  {p.part_number} ({p.description}): {p.on_hand} on hand @ ${p.unit_cost:.0f}")
+def _print_project_data_status() -> None:
+    PROJECT_DATA.reload()
+    YIELD_DATASET.reload()
+    MANUAL_INDEX.reload()
+    print(PROJECT_DATA.health_report())
+    print(YIELD_DATASET.status_text())
+    print(MANUAL_INDEX.status_text())
 
 
 def _print_graph_structure() -> None:
@@ -60,28 +54,28 @@ def _print_graph_structure() -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Factory Agent — multi-agent demo")
+    parser = argparse.ArgumentParser(description="TCB Chatbot — two-agent demo")
     parser.add_argument("--ask", default=DEFAULT_SCENARIO, help="The situation to hand the team")
-    parser.add_argument("--list", action="store_true", help="Show the simulated factory and exit")
+    parser.add_argument("--status", action="store_true", help="Show Project Data status and exit")
     parser.add_argument("--graph", action="store_true", help="Print the graph structure and exit")
     args = parser.parse_args()
 
-    if args.list:
-        _print_world()
+    if args.status:
+        _print_project_data_status()
         return 0
     if args.graph:
         _print_graph_structure()
         return 0
 
-    reset_world()
-    reset_audit()
+    PROJECT_DATA.reload()
+    YIELD_DATASET.reload()
+    MANUAL_INDEX.reload()
 
     print("=" * 70)
-    print("  Factory Agent — multi-agent production orchestration demo")
+    print("  TCB Chatbot — two-agent Project Data demo")
     print("=" * 70)
-    _print_world()
+    _print_project_data_status()
     print(f"\nMode: {'LLM (' + settings.chat_model + ')' if settings.llm_enabled else 'NO KEY'}"
-          f" | auto-approve limit: ${settings.auto_approve_limit:.0f}"
           f" | recursion limit: {settings.recursion_limit}")
     print(f"\n>>> Incoming: {args.ask}\n")
 
@@ -109,14 +103,9 @@ def main() -> int:
         return 1
 
     print("\n" + "=" * 70)
-    print("RESULT — factory state after the run")
+    print("RESULT — latest two-agent response")
     print("=" * 70)
-    print(WORLD.summary())
-    print("\nSecure audit trail (every action the agents took):")
-    for entry in AUDIT_LOG:
-        print(f"  {entry}")
-    if not AUDIT_LOG:
-        print("  (no actions were taken)")
+    print("Run completed. Use the Streamlit UI or cli.py for multi-turn conversation.")
     return 0
 
 

@@ -73,6 +73,11 @@ class Settings:
     mtp_csv_path: str = field(
         default_factory=lambda: os.getenv("MTP_CSV_PATH", str(PROJECT_DATA_ROOT / "mtp.csv"))
     )
+    technician_docs_dir: str = field(
+        default_factory=lambda: os.getenv(
+            "TECHNICIAN_DOCS_DIR", str(PROJECT_DATA_ROOT / "Technician")
+        )
+    )
     # Optional path to yield data CSV used by the analytics tools.
     yield_csv_path: str = field(
         default_factory=lambda: os.getenv(
@@ -80,6 +85,7 @@ class Settings:
             str(PROJECT_DATA_ROOT / "Yield" / "Yield data by tools.csv"),
         )
     )
+    manual_top_k: int = field(default_factory=lambda: int(os.getenv("MANUAL_TOP_K", "3")))
 
     # --- UI branding -------------------------------------------------------
     app_title: str = field(default_factory=lambda: os.getenv("APP_TITLE", "TCB Chatbot"))

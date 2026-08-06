@@ -9,6 +9,8 @@ langchain-core>=0.3.0      # messages, tools (@tool)
 langchain-openai>=0.2.0    # ChatOpenAI chat model
 openai>=1.30.0             # OpenAI client (pulled in by langchain-openai)
 streamlit>=1.37.0          # popup/web chatbot UI
+openpyxl>=3.1.0            # optional: parse Technician .xlsx docs
+pypdf>=4.0.0               # optional: parse Technician .pdf docs
 
 # --- Tests (optional) --------------------------------------------------------
 pytest>=8.0.0

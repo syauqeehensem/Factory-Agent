@@ -19,17 +19,15 @@ from langgraph.checkpoint.memory import MemorySaver
 from factory_agent import build_graph
 from factory_agent.config import settings
 from factory_agent.llm import LLMNotConfigured, build_chat_model
-from factory_agent.mock_factory import WORLD, reset_world
 from factory_agent.project_data import PROJECT_DATA
-from factory_agent.security import AUDIT_LOG, reset_audit
+from factory_agent.yield_data import YIELD_DATASET
 
 CHECKPOINTER = MemorySaver()
 
 NODE_LABELS = {
     "supervisor": "Floor Supervisor",
-    "maintenance_scheduler": "Maintenance Scheduler",
-    "yield_specialist": "Yield Specialist",
-    "parts_procurement": "Parts Procurement",
+    "agent_technician": "Agent Technician",
+    "agent_yield": "Agent Yield",
 }
 
 
@@ -74,8 +72,8 @@ def _start_graph():
     """Build the LangGraph instance, returning (graph, error_message)."""
     if not settings.llm_enabled:
         return None, (
-            "No OPENAI_API_KEY found in .env. Add it, then refresh this page. "
-            "You can still inspect world state and audit data."
+            "No OPENAI_API_KEY found in .env. Add it, then refresh this page "
+            "to enable live answers."
         )
     try:
         return build_graph(build_chat_model(), checkpointer=CHECKPOINTER), ""
@@ -84,9 +82,9 @@ def _start_graph():
 
 
 def _reset_state() -> None:
-    """Reset world, audit log, graph, and chat history for a new session."""
-    reset_world()
-    reset_audit()
+    """Reset graph and chat history for a new session."""
+    PROJECT_DATA.reload()
+    YIELD_DATASET.reload()
     st.session_state.chat_log = []
     st.session_state.thread_id = str(uuid4())
     st.session_state.graph, st.session_state.startup_error = _start_graph()
@@ -107,9 +105,8 @@ def _run_turn(question: str) -> dict:
     if graph is None:
         return {
             "reply": (
-                "I am currently running in offline mode. Add OPENAI_API_KEY in .env "
-                "to enable live multi-agent reasoning, or ask for Project Data "
-                "status/ticket/yield summaries."
+                "I cannot reach the live model right now. Add OPENAI_API_KEY in .env "
+                "and refresh to continue."
             ),
             "steps": [],
         }
@@ -146,63 +143,23 @@ def _run_turn(question: str) -> dict:
 
 
 def _render_assistant(message: dict) -> None:
-    """Render the assistant turn as a natural reply, with agent steps tucked away."""
+    """Render assistant reply."""
     st.markdown(message.get("content", ""))
-
-    steps = message.get("steps") or []
-    if len(steps) > 1:
-        with st.expander("Agent activity", expanded=False):
-            for step in steps:
-                label = NODE_LABELS.get(
-                    step["node"], step["node"].replace("_", " ").title()
-                )
-                st.markdown(f"**{label}**")
-                st.markdown(step["content"])
 
 
 def main() -> None:
     st.set_page_config(page_title=settings.app_title, page_icon="🏭", layout="centered")
     _init_session()
 
-    graph_online = st.session_state.graph is not None
-    mode_text = "LLM" if graph_online else "Retrieval-style offline (no API key)"
-    msg_count = len(st.session_state.chat_log)
-
     _render_brand_header()
 
-    with st.sidebar:
-        st.header("TCB Settings")
-        st.write(f"**Mode:** {mode_text}")
-        st.write(f"**Model:** `{settings.chat_model}`")
-        st.write(f"**Recursion limit:** `{settings.recursion_limit}`")
-        st.write(f"**Auto-approve limit:** `${settings.auto_approve_limit:.0f}`")
-        st.write(f"**Memory thread:** `{st.session_state.thread_id[:8]}`")
-        st.write(f"**Conversation turns:** `{msg_count}`")
-        st.write(f"**Project Data root:** `{settings.project_data_dir}`")
-        st.caption(PROJECT_DATA.health_report())
-
-        if not settings.llm_enabled:
-            st.info("Add `OPENAI_API_KEY` to `.env` for live multi-agent answers.")
-
-        st.divider()
-        st.subheader("Your assistants")
-        st.markdown("**Floor Supervisor**  \n_Routes work across specialists and closes decisions._")
-        st.markdown("**Maintenance Scheduler**  \n_Triages machine alerts and schedules work orders._")
-        st.markdown("**Yield Specialist**  \n_Explains trend risk and improvement opportunities._")
-        st.markdown("**Parts Procurement**  \n_Checks stock and places required part orders._")
-
-        if st.button("Reset World + Chat", use_container_width=True):
+    top_left, top_right = st.columns([4, 1])
+    with top_left:
+        st.caption("Project-Data-only assistants: Agent Technician + Agent Yield")
+    with top_right:
+        if st.button("New Chat"):
             _reset_state()
             st.rerun()
-
-        with st.expander("Factory Snapshot", expanded=False):
-            st.text(WORLD.summary())
-
-        with st.expander("Audit Trail", expanded=False):
-            if AUDIT_LOG:
-                st.text("\n".join(str(entry) for entry in AUDIT_LOG))
-            else:
-                st.caption("Audit trail is empty.")
 
     if st.session_state.startup_error:
         st.warning(st.session_state.startup_error)
@@ -215,7 +172,7 @@ def main() -> None:
                 st.markdown(message["content"])
 
     prompt = st.chat_input(
-        "Ask naturally: line down, ticket patterns, yield trend, or parts readiness..."
+        "Ask naturally: line status, ticket issue, manual troubleshooting, or yield trend..."
     )
     if not prompt:
         return
