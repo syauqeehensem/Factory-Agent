@@ -38,6 +38,14 @@ def _load_dotenv() -> None:
 _load_dotenv()
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse common truthy/falsey env values with a safe default."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 @dataclass
 class Settings:
     """Runtime settings, populated from the environment with sane defaults."""
@@ -77,6 +85,15 @@ class Settings:
         default_factory=lambda: os.getenv("YIELD_CSV_PATH", str(DATA_ROOT / "yield.csv"))
     )
     manual_top_k: int = field(default_factory=lambda: int(os.getenv("MANUAL_TOP_K", "3")))
+    manual_max_pdf_pages: int = field(
+        default_factory=lambda: int(os.getenv("MANUAL_MAX_PDF_PAGES", "60"))
+    )
+    manual_max_chunks_per_file: int = field(
+        default_factory=lambda: int(os.getenv("MANUAL_MAX_CHUNKS_PER_FILE", "180"))
+    )
+    manual_status_lazy: bool = field(
+        default_factory=lambda: _env_bool("MANUAL_STATUS_LAZY", True)
+    )
     # Yield goal: tools at/above this percent are healthy; below triggers escalation.
     yield_threshold: float = field(
         default_factory=lambda: float(os.getenv("YIELD_THRESHOLD", "50"))

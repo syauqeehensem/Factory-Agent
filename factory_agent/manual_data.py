@@ -1,7 +1,7 @@
-"""Technician manual indexing for Project Data-only retrieval.
+"""Technician manual indexing for data/ retrieval.
 
-Builds a lightweight local index from files under Project Data/Technician and
-supports keyword-based snippet retrieval for the Technician agent.
+Builds a lightweight local index from files under the configured technician-doc
+folder and supports keyword-based snippet retrieval for the Technician agent.
 """
 
 from __future__ import annotations
@@ -22,8 +22,17 @@ class ManualChunk:
 class ManualIndex:
     """Small in-memory chunk index with keyword-overlap ranking."""
 
-    def __init__(self, root_dir: str | Path) -> None:
+    def __init__(
+        self,
+        root_dir: str | Path,
+        max_pdf_pages: int = 0,
+        max_chunks_per_file: int = 0,
+        lazy_status: bool = True,
+    ) -> None:
         self.root_dir = Path(root_dir)
+        self.max_pdf_pages = max(0, int(max_pdf_pages))
+        self.max_chunks_per_file = max(0, int(max_chunks_per_file))
+        self.lazy_status = bool(lazy_status)
         self.chunks: list[ManualChunk] = []
         self.load_error: str | None = None
         self._loaded = False
@@ -55,7 +64,10 @@ class ManualIndex:
             text = self._read_file(path)
             if not text:
                 continue
-            for idx, chunk in enumerate(self._chunk_text(text), start=1):
+            file_chunks = self._chunk_text(text)
+            if self.max_chunks_per_file:
+                file_chunks = file_chunks[: self.max_chunks_per_file]
+            for idx, chunk in enumerate(file_chunks, start=1):
                 source = f"{path.name}#chunk{idx}"
                 self.chunks.append(ManualChunk(source=source, text=chunk))
 
@@ -70,6 +82,11 @@ class ManualIndex:
         return self.load_error is None and bool(self.chunks)
 
     def status_text(self) -> str:
+        if not self._loaded and self.lazy_status:
+            return (
+                "Technician manual index not loaded yet (lazy mode). "
+                "It will load on first manual search."
+            )
         self.ensure_loaded()
         if self.load_error:
             return f"Technician manual index unavailable: {self.load_error}"
@@ -163,8 +180,7 @@ class ManualIndex:
         except OSError:
             return ""
 
-    @staticmethod
-    def _read_pdf(path: Path) -> str:
+    def _read_pdf(self, path: Path) -> str:
         try:
             from pypdf import PdfReader
         except Exception:
@@ -172,8 +188,15 @@ class ManualIndex:
         try:
             reader = PdfReader(str(path))
             out: list[str] = []
-            for page in reader.pages:
-                txt = page.extract_text() or ""
+            page_count = len(reader.pages)
+            limit = page_count
+            if self.max_pdf_pages > 0:
+                limit = min(page_count, self.max_pdf_pages)
+            for idx in range(limit):
+                try:
+                    txt = reader.pages[idx].extract_text() or ""
+                except Exception:
+                    continue
                 if txt:
                     out.append(txt)
             return "\n".join(out)
@@ -202,4 +225,9 @@ class ManualIndex:
             return ""
 
 
-MANUAL_INDEX = ManualIndex(settings.technician_docs_dir)
+MANUAL_INDEX = ManualIndex(
+    root_dir=settings.technician_docs_dir,
+    max_pdf_pages=settings.manual_max_pdf_pages,
+    max_chunks_per_file=settings.manual_max_chunks_per_file,
+    lazy_status=settings.manual_status_lazy,
+)
