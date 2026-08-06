@@ -36,6 +36,10 @@ class ManualIndex:
         self.chunks: list[ManualChunk] = []
         self.load_error: str | None = None
         self._loaded = False
+        self.search_cache_size = max(0, int(settings.manual_search_cache_size))
+        self._search_cache: dict[tuple[str, int], str] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     def ensure_loaded(self) -> None:
         if not self._loaded:
@@ -45,6 +49,9 @@ class ManualIndex:
         self._loaded = True
         self.chunks = []
         self.load_error = None
+        self._search_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
 
         if not self.root_dir.exists():
             self.load_error = f"folder not found at {self.root_dir}"
@@ -93,7 +100,9 @@ class ManualIndex:
         files = {c.source.split("#", 1)[0] for c in self.chunks}
         return (
             f"Technician manual index ready: {len(files)} file(s), "
-            f"{len(self.chunks)} chunks."
+            f"{len(self.chunks)} chunks. "
+            f"Search cache: {len(self._search_cache)} item(s), "
+            f"hits={self._cache_hits}, misses={self._cache_misses}."
         )
 
     def search(self, query: str, top_k: int = 3) -> str:
@@ -102,6 +111,15 @@ class ManualIndex:
             return f"Technician manual index unavailable: {self.load_error}"
         if not self.chunks:
             return "Technician manual index is empty."
+
+        normalized_query = self._normalize_query(query)
+        k = max(1, int(top_k))
+        cache_key = (normalized_query, k)
+        cached = self._search_cache.get(cache_key)
+        if cached is not None:
+            self._cache_hits += 1
+            return cached
+        self._cache_misses += 1
 
         terms = self._terms(query)
         if not terms:
@@ -114,19 +132,38 @@ class ManualIndex:
                 scored.append((score, chunk))
 
         if not scored:
-            return (
+            result = (
                 "I could not find a close manual match for that question. "
                 "Try adding the exact symptom, station, or error keyword."
             )
+            self._remember_search(cache_key, result)
+            return result
 
         scored.sort(key=lambda item: item[0], reverse=True)
         rows = ["Top technician manual snippets:"]
-        for rank, (score, chunk) in enumerate(scored[: max(1, top_k)], start=1):
+        for rank, (score, chunk) in enumerate(scored[:k], start=1):
             rows.append(
                 f"{rank}. [{chunk.source}] score={score}\n"
                 f"   {self._trim(chunk.text, 260)}"
             )
-        return "\n".join(rows)
+        result = "\n".join(rows)
+        self._remember_search(cache_key, result)
+        return result
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        return " ".join((query or "").strip().lower().split())
+
+    def _remember_search(self, key: tuple[str, int], value: str) -> None:
+        if self.search_cache_size <= 0:
+            return
+        if key in self._search_cache:
+            self._search_cache.pop(key, None)
+        elif len(self._search_cache) >= self.search_cache_size:
+            oldest = next(iter(self._search_cache), None)
+            if oldest is not None:
+                self._search_cache.pop(oldest, None)
+        self._search_cache[key] = value
 
     @staticmethod
     def _terms(text: str) -> set[str]:

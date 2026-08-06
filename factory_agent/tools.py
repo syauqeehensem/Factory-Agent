@@ -17,6 +17,21 @@ from .project_data import PROJECT_DATA
 from .tickets import TICKET_STORE
 from .yield_data import YIELD_DATASET
 
+_ENTITY_CONTEXT_CACHE: dict[tuple[int, str, int], str] = {}
+
+
+def _remember_entity_context(key: tuple[int, str, int], value: str) -> None:
+    limit = max(0, int(settings.entity_context_cache_size))
+    if limit <= 0:
+        return
+    if key in _ENTITY_CONTEXT_CACHE:
+        _ENTITY_CONTEXT_CACHE.pop(key, None)
+    elif len(_ENTITY_CONTEXT_CACHE) >= limit:
+        oldest = next(iter(_ENTITY_CONTEXT_CACHE), None)
+        if oldest is not None:
+            _ENTITY_CONTEXT_CACHE.pop(oldest, None)
+    _ENTITY_CONTEXT_CACHE[key] = value
+
 
 def _data_status_text() -> str:
     return (
@@ -40,6 +55,7 @@ def refresh_data() -> str:
     YIELD_DATASET.reload()
     MANUAL_INDEX.reload()
     KNOWLEDGE_RAG.reload()
+    _ENTITY_CONTEXT_CACHE.clear()
     return _data_status_text()
 
 
@@ -128,6 +144,11 @@ def get_entity_full_context(entity: str, manual_top_k: int = 2) -> str:
         return "Please provide an entity code, e.g. TCB706 or TSX509."
 
     top_k = max(1, min(int(manual_top_k), 4))
+    cache_key = (KNOWLEDGE_RAG.version, key, top_k)
+    cached = _ENTITY_CONTEXT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     manual_query = _best_manual_query_for_entity(key)
     rag_query = f"{key} {manual_query} status ticket yield troubleshooting"
 
@@ -140,13 +161,15 @@ def get_entity_full_context(entity: str, manual_top_k: int = 2) -> str:
         top_k=max(top_k + 2, settings.rag_top_k),
     )
 
-    return (
+    result = (
         f"Integrated context for {key}:\n"
         f"- Status: {status_text}\n"
         f"- Tickets: {ticket_text}\n"
         f"- Yield: {yield_text}\n"
         f"- RAG evidence (query: {rag_query}): {rag_text}"
     )
+    _remember_entity_context(cache_key, result)
+    return result
 
 
 @tool

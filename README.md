@@ -1,25 +1,33 @@
 ﻿# TCB Chatbot (Factory Agent)
 
-Project-Data-only multi-agent chatbot for manufacturing support.
+Entity-first manufacturing support chatbot with deterministic routing and local-data RAG.
 
-This version is intentionally focused on two specialists only:
+## Core flow
 
-- Agent Technician: line status, ticket analysis, and technician-manual troubleshooting
-- Agent Yield: yield trends, hotspots, lot checks, and baseline comparisons
+- `status_check` extracts an entity code (`TCB706`, `TSX509`, ...)
+- DOWN routes to `Agent Technician`
+- UP routes to `Agent Yield`
+- both route to shared `Escalation`
 
-A supervisor node routes requests between these two agents and finishes when the
-question is sufficiently answered.
+## Local data scope
 
-## Data scope
+The chatbot uses only files under `data/`:
 
-The pipeline is constrained to files under `Project Data` only:
+- `data/status.csv`
+- `data/mtp.csv`
+- `data/yield.csv`
+- `data/*.pdf`, `data/*.xlsx`, `data/*.txt`, `data/*.md` for manuals
 
-- `Project Data/status.csv`
-- `Project Data/mtp.csv`
-- `Project Data/Yield/Yield data by tools.csv`
-- `Project Data/Technician/*` (PDF/XLSX/TXT/MD/CSV)
+No external factory system writes are performed. Ticket creation is simulated in memory.
 
-No mock-machine or non-Project-Data sources are used for normal responses.
+## Smoothness features
+
+- Base style (`/style base`) is deterministic and does not wait on model latency.
+- Natural style (`/style natural`) has a soft UI timeout and falls back to local data.
+- Session response cache speeds repeated prompts.
+- RAG and manual search caches reduce repeated retrieval cost.
+- Quick action buttons in UI for common flows.
+- Runtime commands for status and reload.
 
 ## Quick start
 
@@ -28,15 +36,17 @@ pip install -r requirements.txt
 copy .env.example .env
 # add OPENAI_API_KEY in .env
 
-streamlit run chat_ui.py
+python -m streamlit run chat_ui.py
 ```
 
-Minimal UI goals:
+## Slash commands (UI)
 
-- clean chat-only interface
-- no settings sidebar
-- one "New Chat" button
-- natural conversational answers
+- `/style base`
+- `/style natural`
+- `/status`
+- `/rag`
+- `/reload`
+- `/help`
 
 ## Optional commands
 
@@ -44,38 +54,35 @@ Minimal UI goals:
 python cli.py
 python run_demo.py --status
 python run_demo.py --graph
-python tests/test_smoke.py
+python -m pytest tests/test_smoke.py -q
 ```
 
-## Environment variables
-
-Core values in `.env.example`:
+## Important environment variables
 
 - `OPENAI_API_KEY`
 - `CHAT_MODEL`
 - `LLM_TIMEOUT_SECONDS`
-- `LLM_MAX_RETRIES`
-- `RECURSION_LIMIT`
-- `PROJECT_DATA_DIR`
+- `UI_SOFT_TIMEOUT_SECONDS`
+- `UI_RESPONSE_CACHE_SIZE`
+- `RAG_QUERY_CACHE_SIZE`
+- `MANUAL_SEARCH_CACHE_SIZE`
+- `ENTITY_CONTEXT_CACHE_SIZE`
 - `STATUS_CSV_PATH`
 - `MTP_CSV_PATH`
 - `YIELD_CSV_PATH`
 - `TECHNICIAN_DOCS_DIR`
-- `MANUAL_TOP_K`
-- `APP_TITLE`
-- `FOUNDRY_LOGO_PATH`
 
 ## Privacy note
 
-`Project Data/` is git-ignored by default and should stay local if it contains
-PnC/proprietary material.
+`data/` is git-ignored by default and should remain local when it contains confidential production information.
 
 ## Key files
 
-- `factory_agent/graph.py` - supervisor + 2-agent routing graph
-- `factory_agent/agents.py` - Agent Technician and Agent Yield prompts
-- `factory_agent/tools.py` - Project-Data-only tools
-- `factory_agent/project_data.py` - status/ticket data access
-- `factory_agent/yield_data.py` - yield analytics
-- `factory_agent/manual_data.py` - technician manual indexing/search
-- `chat_ui.py` - minimal Streamlit chat interface
+- `factory_agent/graph.py` - deterministic status router + specialist handoffs
+- `factory_agent/agents.py` - specialist prompts (base and natural)
+- `factory_agent/tools.py` - integrated read/action tools and entity context
+- `factory_agent/knowledge_rag.py` - unified CSV/manual retrieval and query cache
+- `factory_agent/manual_data.py` - manual indexing and search cache
+- `factory_agent/project_data.py` - status and ticket CSV adapters
+- `factory_agent/yield_data.py` - per-entity yield checks
+- `chat_ui.py` - Streamlit frontend with soft-timeout fallback and quick actions

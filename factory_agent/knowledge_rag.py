@@ -40,15 +40,28 @@ class KnowledgeRAG:
         self.chunks: list[RagChunk] = []
         self.load_error: str | None = None
         self._loaded = False
+        self._version = 0
+        self.query_cache_size = max(0, int(settings.rag_query_cache_size))
+        self._query_cache: dict[tuple[int, str, str, int], str] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+    @property
+    def version(self) -> int:
+        return self._version
 
     def ensure_loaded(self) -> None:
         if not self._loaded:
             self.reload()
 
     def reload(self) -> None:
+        self._version += 1
         self._loaded = True
         self.chunks = []
         self.load_error = None
+        self._query_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0
 
         self._load_csv_chunks()
         self._load_manual_chunks()
@@ -68,7 +81,9 @@ class KnowledgeRAG:
             f"status={counts.get('status', 0)}, "
             f"tickets={counts.get('ticket', 0)}, "
             f"yield={counts.get('yield', 0)}, "
-            f"manual={counts.get('manual', 0)} chunk(s)."
+            f"manual={counts.get('manual', 0)} chunk(s). "
+            f"Query cache: {len(self._query_cache)} item(s), "
+            f"hits={self._cache_hits}, misses={self._cache_misses}."
         )
 
     def search(self, query: str, entity: str = "", top_k: int = 6) -> str:
@@ -80,6 +95,14 @@ class KnowledgeRAG:
 
         key = entity.strip().upper()
         k = max(1, min(int(top_k), 12))
+        normalized_query = self._normalize_query(query)
+        cache_key = (self._version, normalized_query, key, k)
+        cached = self._query_cache.get(cache_key)
+        if cached is not None:
+            self._cache_hits += 1
+            return cached
+        self._cache_misses += 1
+
         terms = self._terms(f"{query} {key}".strip())
 
         selected: list[tuple[int, RagChunk]] = []
@@ -103,16 +126,35 @@ class KnowledgeRAG:
         results = (selected + scored)[:k]
 
         if not results:
-            return (
+            result = (
                 "No strong RAG matches found. "
                 "Try including an entity code, error phrase, or ticket id."
             )
+            self._remember_result(cache_key, result)
+            return result
 
         rows = ["Top integrated RAG chunks:"]
         for rank, (score, chunk) in enumerate(results, start=1):
             rows.append(f"{rank}. [{chunk.source}] ({chunk.kind}) score={score}")
             rows.append(f"   {self._trim(chunk.text, 260)}")
-        return "\n".join(rows)
+        result = "\n".join(rows)
+        self._remember_result(cache_key, result)
+        return result
+
+    @staticmethod
+    def _normalize_query(query: str) -> str:
+        return " ".join((query or "").strip().lower().split())
+
+    def _remember_result(self, key: tuple[int, str, str, int], value: str) -> None:
+        if self.query_cache_size <= 0:
+            return
+        if key in self._query_cache:
+            self._query_cache.pop(key, None)
+        elif len(self._query_cache) >= self.query_cache_size:
+            oldest = next(iter(self._query_cache), None)
+            if oldest is not None:
+                self._query_cache.pop(oldest, None)
+        self._query_cache[key] = value
 
     def _load_csv_chunks(self) -> None:
         for row in PROJECT_DATA.status_rows:

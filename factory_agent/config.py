@@ -100,9 +100,29 @@ class Settings:
     rag_manual_max_chunks: int = field(
         default_factory=lambda: int(os.getenv("RAG_MANUAL_MAX_CHUNKS", "500"))
     )
+    rag_query_cache_size: int = field(
+        default_factory=lambda: int(os.getenv("RAG_QUERY_CACHE_SIZE", "256"))
+    )
+    manual_search_cache_size: int = field(
+        default_factory=lambda: int(os.getenv("MANUAL_SEARCH_CACHE_SIZE", "128"))
+    )
+    entity_context_cache_size: int = field(
+        default_factory=lambda: int(os.getenv("ENTITY_CONTEXT_CACHE_SIZE", "200"))
+    )
     # Yield goal: tools at/above this percent are healthy; below triggers escalation.
     yield_threshold: float = field(
         default_factory=lambda: float(os.getenv("YIELD_THRESHOLD", "50"))
+    )
+
+    # --- UI responsiveness --------------------------------------------------
+    ui_soft_timeout_seconds: float = field(
+        default_factory=lambda: float(os.getenv("UI_SOFT_TIMEOUT_SECONDS", "12"))
+    )
+    ui_response_cache_size: int = field(
+        default_factory=lambda: int(os.getenv("UI_RESPONSE_CACHE_SIZE", "120"))
+    )
+    ui_show_agent_trace: bool = field(
+        default_factory=lambda: _env_bool("UI_SHOW_AGENT_TRACE", True)
     )
 
     # --- UI branding -------------------------------------------------------
