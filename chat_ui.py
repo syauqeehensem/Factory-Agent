@@ -19,9 +19,11 @@ from langgraph.checkpoint.memory import MemorySaver
 from factory_agent import build_graph
 from factory_agent.config import settings
 from factory_agent.knowledge_rag import KNOWLEDGE_RAG
+from factory_agent.graph import _extract_entity
 from factory_agent.llm import LLMNotConfigured, build_chat_model
 from factory_agent.project_data import PROJECT_DATA
 from factory_agent.tickets import TICKET_STORE
+from factory_agent.tools import get_entity_full_context
 from factory_agent.yield_data import YIELD_DATASET
 
 CHECKPOINTER = MemorySaver()
@@ -123,6 +125,21 @@ def _switch_prompt_style(style: str) -> str:
     return f"Prompt style switched to: {candidate}."
 
 
+def _deterministic_entity_reply(question: str, reason: str = "") -> str:
+    """Return a fast local-data answer without any LLM call."""
+    entity = _extract_entity(question)
+    if not entity:
+        note = f" ({reason})" if reason else ""
+        return (
+            "Please enter a valid entity code like TCB706 or TSX509."
+            f"{note}"
+        )
+
+    context = get_entity_full_context.invoke({"entity": entity, "manual_top_k": 2})
+    lines = [f"Mode: deterministic local-data fallback{f' ({reason})' if reason else ''}", context]
+    return "\n\n".join(lines)
+
+
 def _run_turn(question: str) -> dict:
     """Run one request through the graph, returning a conversational reply + steps."""
     graph = st.session_state.graph
@@ -142,6 +159,11 @@ def _run_turn(question: str) -> dict:
     }
     steps: list[dict[str, str]] = []
 
+    if st.session_state.get("prompt_style", "base") == "base":
+        # Base style is guaranteed local and immediate, independent of model latency.
+        reply = _deterministic_entity_reply(question, reason="base mode")
+        return {"reply": reply, "steps": [{"node": "fallback", "content": reply}]}
+
     try:
         for step in graph.stream(inputs, config=run_config):
             for node, update in step.items():
@@ -157,24 +179,16 @@ def _run_turn(question: str) -> dict:
                 "I cannot authenticate with the model right now. "
                 "Please check OPENAI_API_KEY in .env, then try again."
             )
+            return {"reply": fallback, "steps": [{"node": "fallback", "content": fallback}]}
         elif "timed out" in lowered or "timeout" in lowered:
-            fallback = (
-                "I am hitting a model timeout right now. "
-                "Please retry in a few seconds and I will continue from there."
-            )
+            reply = _deterministic_entity_reply(question, reason="model timeout")
+            return {"reply": reply, "steps": [{"node": "fallback", "content": reply}]}
         elif "rate limit" in lowered or "429" in lowered:
-            fallback = (
-                "I reached the model rate limit for the moment. "
-                "Please retry shortly."
-            )
+            reply = _deterministic_entity_reply(question, reason="rate limit")
+            return {"reply": reply, "steps": [{"node": "fallback", "content": reply}]}
         else:
-            fallback = "I hit a temporary model issue. Please try your question again."
-
-        spoken = [s["content"] for s in steps]
-        if spoken:
-            partial = "\n\n".join(spoken)
-            return {"reply": f"{partial}\n\n{fallback}", "steps": steps}
-        return {"reply": fallback, "steps": []}
+            reply = _deterministic_entity_reply(question, reason="temporary model issue")
+            return {"reply": reply, "steps": [{"node": "fallback", "content": reply}]}
 
     # A conversational reply = what the specialists and escalation said.
     spoken = [s["content"] for s in steps]
