@@ -78,6 +78,9 @@ from `assets/foundry-logo.svg` (override via `FOUNDRY_LOGO_PATH` in `.env`).
 
 ## Integrating project Yield CSV
 
+`Project Data/` is treated as local-only (PnC/proprietary) and is git-ignored by default.
+Keep those files on your machine and do not commit them.
+
 This workspace now includes first-pass integration with the Yield dataset at
 `Project Data/Yield/Yield data by tools.csv`.
 

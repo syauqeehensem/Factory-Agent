@@ -1,6 +1,9 @@
 # Secrets — never commit your real keys
 .env
 
+# Local/proprietary datasets (PnC) — keep only on your machine
+Project Data/
+
 # Python
 __pycache__/
 *.py[cod]
