@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage
 
 from factory_agent import build_graph
 from factory_agent.config import settings
+from factory_agent.knowledge_rag import KNOWLEDGE_RAG
 from factory_agent.llm import LLMNotConfigured, build_chat_model
 from factory_agent.manual_data import MANUAL_INDEX
 from factory_agent.project_data import PROJECT_DATA
@@ -34,9 +35,11 @@ def _print_project_data_status() -> None:
     PROJECT_DATA.reload()
     YIELD_DATASET.reload()
     MANUAL_INDEX.reload()
+    KNOWLEDGE_RAG.reload()
     print(PROJECT_DATA.health_report())
     print(YIELD_DATASET.status_text())
     print(MANUAL_INDEX.status_text())
+    print(KNOWLEDGE_RAG.status_text())
 
 
 def _print_graph_structure() -> None:
@@ -53,6 +56,12 @@ def _print_graph_structure() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="TCB Chatbot — two-agent demo")
     parser.add_argument("--ask", default=DEFAULT_SCENARIO, help="An entity code to review (e.g. TCB706)")
+    parser.add_argument(
+        "--style",
+        choices=["base", "natural"],
+        default=(settings.prompt_style if settings.prompt_style in {"base", "natural"} else "base"),
+        help="Prompt style: base (structured) or natural (conversational)",
+    )
     parser.add_argument("--status", action="store_true", help="Show Project Data status and exit")
     parser.add_argument("--graph", action="store_true", help="Print the graph structure and exit")
     args = parser.parse_args()
@@ -73,12 +82,12 @@ def main() -> int:
     print("=" * 70)
     _print_project_data_status()
     print(f"\nMode: {'LLM (' + settings.chat_model + ')' if settings.llm_enabled else 'NO KEY'}"
-          f" | recursion limit: {settings.recursion_limit}")
+            f" | recursion limit: {settings.recursion_limit} | style: {args.style}")
     print(f"\n>>> Incoming: {args.ask}\n")
 
     try:
         model = build_chat_model()
-        graph = build_graph(model)
+        graph = build_graph(model, prompt_style=args.style)
     except LLMNotConfigured as exc:
         print(f"[cannot run] {exc}")
         return 1

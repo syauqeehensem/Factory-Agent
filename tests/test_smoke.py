@@ -22,8 +22,10 @@ from factory_agent.tools import (
     get_entity_ticket_summary,
     get_entity_yield,
     get_line_status_snapshot,
+    get_rag_status,
     list_technician_documents,
     list_yield_below_goal,
+    search_all_knowledge,
     search_technician_manuals,
 )
 
@@ -32,9 +34,13 @@ def test_graph_compiles_with_expected_nodes():
     from langchain_openai import ChatOpenAI
 
     dummy = ChatOpenAI(model="gpt-4o-mini", api_key="sk-dummy-compile-only")
-    graph = build_graph(dummy)  # no network — construction only
+    graph = build_graph(dummy, prompt_style="base")  # no network — construction only
     nodes = set(graph.get_graph().nodes)
     assert {"status_check", "technician", "yield", "escalation"}.issubset(nodes)
+
+    graph2 = build_graph(dummy, prompt_style="natural")
+    nodes2 = set(graph2.get_graph().nodes)
+    assert {"status_check", "technician", "yield", "escalation"}.issubset(nodes2)
 
 
 def test_extract_entity_from_text():
@@ -48,11 +54,32 @@ def test_status_check_values_up_and_down():
     assert PROJECT_DATA.entity_status_value("TCB702") == "DOWN"
 
 
+def test_rag_status_reports_loaded_or_lazy():
+    out = get_rag_status.invoke({})
+    assert "RAG index" in out
+
+
+def test_search_all_knowledge_returns_chunks():
+    out = search_all_knowledge.invoke(
+        {"query": "Optics Table PR Vision Error", "entity": "TSX509", "top_k": 4}
+    )
+    assert "Top integrated RAG chunks" in out or "RAG index unavailable" in out
+
+
+def test_search_all_knowledge_contains_csv_sources_for_entity():
+    out = search_all_knowledge.invoke(
+        {"query": "TSX509 status ticket yield", "entity": "TSX509", "top_k": 6}
+    )
+    assert "status.csv" in out
+    assert "yield.csv" in out
+
+
 def test_data_status_reports_sources():
     out = get_data_status.invoke({})
     assert "Data:" in out
     assert "Yield dataset" in out
     assert "Technician manual" in out
+    assert "RAG index" in out
 
 
 def test_line_status_snapshot_returns_summary_text():
@@ -76,7 +103,7 @@ def test_entity_full_context_includes_all_sections():
     assert "Status:" in out
     assert "Tickets:" in out
     assert "Yield:" in out
-    assert "Manual evidence" in out
+    assert "RAG evidence" in out
 
 
 def test_entity_yield_below_goal_is_fail():

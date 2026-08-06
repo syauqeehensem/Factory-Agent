@@ -59,6 +59,8 @@ class Settings:
     llm_max_retries: int = field(default_factory=lambda: int(os.getenv("LLM_MAX_RETRIES", "0")))
     # Low temperature = predictable orchestration decisions.
     temperature: float = field(default_factory=lambda: float(os.getenv("TEMPERATURE", "0.1")))
+    # Prompt style: "base" (structured) or "natural" (conversational).
+    prompt_style: str = field(default_factory=lambda: os.getenv("PROMPT_STYLE", "base").strip().lower())
 
     # --- Orchestration -----------------------------------------------------
     # Safety net for cyclic graphs: max super-steps before LangGraph stops.
@@ -93,6 +95,10 @@ class Settings:
     )
     manual_status_lazy: bool = field(
         default_factory=lambda: _env_bool("MANUAL_STATUS_LAZY", True)
+    )
+    rag_top_k: int = field(default_factory=lambda: int(os.getenv("RAG_TOP_K", "6")))
+    rag_manual_max_chunks: int = field(
+        default_factory=lambda: int(os.getenv("RAG_MANUAL_MAX_CHUNKS", "500"))
     )
     # Yield goal: tools at/above this percent are healthy; below triggers escalation.
     yield_threshold: float = field(

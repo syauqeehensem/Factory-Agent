@@ -100,7 +100,7 @@ def _worker_node(agent, name: str):
     return worker
 
 
-def build_graph(model=None, checkpointer: Any | None = None):
+def build_graph(model=None, checkpointer: Any | None = None, prompt_style: str | None = None):
     """Compile and return the runnable status-driven graph.
 
     Pass a ``model`` to inject your own (tests pass a dummy-key ChatOpenAI so the
@@ -111,9 +111,18 @@ def build_graph(model=None, checkpointer: Any | None = None):
 
     builder = StateGraph(FactoryState)
     builder.add_node("status_check", _status_check_node())
-    builder.add_node("technician", _worker_node(build_technician_agent(model), "technician"))
-    builder.add_node("yield", _worker_node(build_yield_agent(model), "yield"))
-    builder.add_node("escalation", _worker_node(build_escalation_agent(model), "escalation"))
+    builder.add_node(
+        "technician",
+        _worker_node(build_technician_agent(model, prompt_style=prompt_style), "technician"),
+    )
+    builder.add_node(
+        "yield",
+        _worker_node(build_yield_agent(model, prompt_style=prompt_style), "yield"),
+    )
+    builder.add_node(
+        "escalation",
+        _worker_node(build_escalation_agent(model, prompt_style=prompt_style), "escalation"),
+    )
 
     builder.add_edge(START, "status_check")
     builder.add_conditional_edges(

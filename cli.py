@@ -19,6 +19,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from factory_agent import build_graph
 from factory_agent.config import settings
+from factory_agent.knowledge_rag import KNOWLEDGE_RAG
 from factory_agent.llm import LLMNotConfigured, build_chat_model
 from factory_agent.manual_data import MANUAL_INDEX
 from factory_agent.project_data import PROJECT_DATA
@@ -55,16 +56,21 @@ def main() -> int:
     print("=" * 64)
     if not settings.llm_enabled:
         print("No OPENAI_API_KEY found. Add one to .env to run live answers.")
-    print("Commands: /reset  /quit\n")
+    print("Commands: /reset  /style base  /style natural  /quit\n")
 
     PROJECT_DATA.reload()
     YIELD_DATASET.reload()
     MANUAL_INDEX.reload()
+    KNOWLEDGE_RAG.reload()
     thread_id = str(uuid4())
+    prompt_style = settings.prompt_style if settings.prompt_style in {"base", "natural"} else "base"
+    print(f"Current prompt style: {prompt_style}")
     graph = None
     if settings.llm_enabled:
         try:
-            graph = build_graph(build_chat_model(), checkpointer=CHECKPOINTER)
+            graph = build_graph(
+                build_chat_model(), checkpointer=CHECKPOINTER, prompt_style=prompt_style
+            )
         except LLMNotConfigured as exc:
             print(f"[warn] {exc}")
 
@@ -83,8 +89,31 @@ def main() -> int:
             PROJECT_DATA.reload()
             YIELD_DATASET.reload()
             MANUAL_INDEX.reload()
+            KNOWLEDGE_RAG.reload()
             thread_id = str(uuid4())
             print("Conversation memory reset.")
+            continue
+        if text.startswith("/style"):
+            parts = text.split(maxsplit=1)
+            if len(parts) < 2:
+                print("Usage: /style base  OR  /style natural")
+                continue
+            candidate = parts[1].strip().lower()
+            if candidate not in {"base", "natural"}:
+                print("Invalid style. Use: base or natural")
+                continue
+            prompt_style = candidate
+            if settings.llm_enabled:
+                try:
+                    graph = build_graph(
+                        build_chat_model(),
+                        checkpointer=CHECKPOINTER,
+                        prompt_style=prompt_style,
+                    )
+                except LLMNotConfigured as exc:
+                    print(f"[warn] {exc}")
+                    graph = None
+            print(f"Prompt style switched to: {prompt_style}")
             continue
         if graph is None:
             print("Agents are offline (no API key).")

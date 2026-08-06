@@ -18,6 +18,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from factory_agent import build_graph
 from factory_agent.config import settings
+from factory_agent.knowledge_rag import KNOWLEDGE_RAG
 from factory_agent.llm import LLMNotConfigured, build_chat_model
 from factory_agent.project_data import PROJECT_DATA
 from factory_agent.tickets import TICKET_STORE
@@ -78,7 +79,12 @@ def _start_graph():
             "to enable live answers."
         )
     try:
-        return build_graph(build_chat_model(), checkpointer=CHECKPOINTER), ""
+        style = st.session_state.get("prompt_style", "base")
+        return build_graph(
+            build_chat_model(),
+            checkpointer=CHECKPOINTER,
+            prompt_style=style,
+        ), ""
     except LLMNotConfigured as exc:
         return None, str(exc)
 
@@ -87,6 +93,7 @@ def _reset_state() -> None:
     """Reset graph and chat history for a new session."""
     PROJECT_DATA.reload()
     YIELD_DATASET.reload()
+    KNOWLEDGE_RAG.reload()
     TICKET_STORE.reset()
     st.session_state.chat_log = []
     st.session_state.thread_id = str(uuid4())
@@ -96,10 +103,24 @@ def _reset_state() -> None:
 def _init_session() -> None:
     if "thread_id" not in st.session_state:
         st.session_state.thread_id = str(uuid4())
+    if "prompt_style" not in st.session_state:
+        st.session_state.prompt_style = (
+            settings.prompt_style if settings.prompt_style in {"base", "natural"} else "base"
+        )
     if st.session_state.get("initialized"):
         return
     st.session_state.initialized = True
     _reset_state()
+
+
+def _switch_prompt_style(style: str) -> str:
+    """Switch prompt style and rebuild the graph in-place."""
+    candidate = style.strip().lower()
+    if candidate not in {"base", "natural"}:
+        return "Invalid style. Use /style base or /style natural."
+    st.session_state.prompt_style = candidate
+    st.session_state.graph, st.session_state.startup_error = _start_graph()
+    return f"Prompt style switched to: {candidate}."
 
 
 def _run_turn(question: str) -> dict:
@@ -179,7 +200,10 @@ def main() -> None:
 
     top_left, top_right = st.columns([4, 1])
     with top_left:
-        st.caption("Enter an entity code — status routes it to Agent Technician (DOWN) or Agent Yield (UP).")
+        st.caption(
+            "Enter an entity code — status routes it to Agent Technician (DOWN) or Agent Yield (UP). "
+            f"Style: {st.session_state.prompt_style}. Use /style base or /style natural to switch."
+        )
     with top_right:
         if st.button("New Chat"):
             _reset_state()
@@ -200,6 +224,20 @@ def main() -> None:
     )
     if not prompt:
         return
+
+    if prompt.lower().startswith("/style"):
+        st.session_state.chat_log.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        parts = prompt.split(maxsplit=1)
+        if len(parts) < 2:
+            reply = "Usage: /style base or /style natural"
+        else:
+            reply = _switch_prompt_style(parts[1])
+        st.session_state.chat_log.append({"role": "assistant", "content": reply, "steps": []})
+        with st.chat_message("assistant"):
+            st.markdown(reply)
+        st.rerun()
 
     st.session_state.chat_log.append({"role": "user", "content": prompt})
     with st.chat_message("user"):

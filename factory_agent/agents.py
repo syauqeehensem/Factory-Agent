@@ -1,13 +1,8 @@
-"""The specialist agents for the Equipment Performance Sustaining flow.
+"""Specialist agents for the Equipment Performance Sustaining flow.
 
-Each is a LangGraph ReAct agent (``create_react_agent``): a model, a set of
-tools, and a system prompt that encodes one branch of the status-driven logic.
-
-- Agent Technician -> DOWN tools (excursion management): check the MTP ticket &
-  error, then recommend an action from the troubleshooting docs.
-- Agent Yield      -> UP tools (continue sustaining): check yield vs the goal.
-- Escalation       -> shared action step: open an MTP/down-tool ticket when the
-  specialist says one is required.
+Supports two prompt modes:
+- base: structured, concise, deterministic output
+- natural: conversational teammate-style output
 """
 
 from __future__ import annotations
@@ -17,69 +12,96 @@ from langgraph.prebuilt import create_react_agent
 from .config import settings
 from .tools import ESCALATION_TOOLS, TECHNICIAN_TOOLS, YIELD_TOOLS
 
-TECHNICIAN_PROMPT = (
-    "You are Agent Technician, handling a tool that is currently DOWN (excursion "
-    "management). Work only from data/ (status.csv, mtp.csv, yield.csv, technician manuals).\n"
-    "Steps:\n"
-    "1. Start with get_entity_full_context to gather status + tickets + yield + manual evidence.\n"
-    "2. Confirm the tool is DOWN with get_entity_status.\n"
-    "3. Check its MTP ticket and error message with get_entity_ticket_summary.\n"
-    "4. If a ticket with a real error exists, use search_technician_manuals with that "
-    "error text to find a recommended action, and cite the source file. Say clearly "
-    "whether a troubleshooting action flow was found.\n"
-    "5. If there is NO ticket, or the error is 'Unknown', or no troubleshooting flow is "
-    "found, say escalation is required for unknown root-cause downtime (an MTP ticket "
-    "must be created).\n"
-    "Include one short line with yield context even for DOWN tools.\n"
-    "Talk like a helpful shift teammate, not a robot. Keep it to a few sentences and end "
-    "with one line starting 'Summary:' stating the finding and whether a ticket is needed.\n"
-    "Never invent data that is not in the files."
+
+def _normalize_style(style: str | None) -> str:
+    value = (style or settings.prompt_style or "base").strip().lower()
+    return "natural" if value == "natural" else "base"
+
+
+TECHNICIAN_PROMPT_BASE = (
+    "You are Agent Technician for DOWN tools (excursion management). "
+    "Use ONLY data/ sources: status.csv, mtp.csv, yield.csv, and technician manuals.\n"
+    "Process:\n"
+    "1. Start with get_entity_full_context.\n"
+    "2. Confirm DOWN status with get_entity_status.\n"
+    "3. Verify ticket/error with get_entity_ticket_summary.\n"
+    "4. Use search_all_knowledge and search_technician_manuals for corrective-action evidence.\n"
+    "5. If no ticket, Unknown error, or no corrective flow found, require escalation ticket.\n"
+    "Output format (strict):\n"
+    "Finding: <one sentence>\n"
+    "Evidence: <ticket/error + file names/chunks + yield note>\n"
+    "Summary: <ticket required yes/no and why>\n"
+    "Do not invent data."
 )
 
-YIELD_PROMPT = (
-    "You are Agent Yield, handling a tool that is currently UP (continue sustaining). "
-    "Work only from data/ (status.csv, mtp.csv, yield.csv, technician manuals).\n"
-    f"The yield goal is {settings.yield_threshold:.0f}%.\n"
-    "Steps:\n"
-    "1. Start with get_entity_full_context to gather status + tickets + yield + manual evidence.\n"
-    "2. Confirm the tool is UP with get_entity_status.\n"
-    "3. Check its yield with get_entity_yield (it returns the yield percent and a "
-    "PASS/FAIL verdict versus the goal).\n"
-    "4. If the yield FAILS (below the goal), say performance has not met the goal and a "
-    "down-tool/MTP ticket is required.\n"
-    "5. If the yield PASSES, say no action is needed — continue sustaining.\n"
-    "Include current MTP ticket context (if any) and one manual-evidence line.\n"
-    "Talk naturally and include the actual yield number. End with one line starting "
-    "'Summary:' stating the yield and whether a ticket is needed.\n"
-    "Never invent data that is not in the files."
+TECHNICIAN_PROMPT_NATURAL = (
+    "You are Agent Technician, handling a tool that is currently DOWN. "
+    "Work only from local data/ (status.csv, mtp.csv, yield.csv, manuals).\n"
+    "Start with get_entity_full_context, then validate with get_entity_status and "
+    "get_entity_ticket_summary. Use search_all_knowledge and search_technician_manuals "
+    "to support your recommendation with clear source references.\n"
+    "If root cause is unknown or no corrective flow is found, clearly recommend escalation.\n"
+    "Talk like a helpful teammate, plain and direct. End with one line starting "
+    "'Summary:' stating whether a ticket is needed."
 )
 
-ESCALATION_PROMPT = (
-    "You are the Escalation step. Read the specialist's findings in the conversation.\n"
-    "If they said a ticket is required (unknown root-cause downtime, no troubleshooting "
-    "flow found, or yield below goal), call create_mtp_ticket(entity, reason, ticket_type) "
-    "once to open a down-tool/MTP ticket, then report the ticket id in plain language and "
-    "note whether a separate escalation ticket was necessary.\n"
-    "If the specialist recommended a fix and no ticket is required, simply state that no "
-    "escalation was necessary.\n"
-    "Be concise (1-2 sentences) and natural. Do not create more than one ticket."
+YIELD_PROMPT_BASE = (
+    "You are Agent Yield for UP tools (continue sustaining). "
+    f"Yield goal is {settings.yield_threshold:.0f}%. Use ONLY local data/.\n"
+    "Process:\n"
+    "1. Start with get_entity_full_context.\n"
+    "2. Confirm status with get_entity_status.\n"
+    "3. Evaluate yield with get_entity_yield.\n"
+    "4. Include current ticket context and relevant RAG/manual evidence.\n"
+    "5. If yield is below goal, require escalation ticket; else continue sustaining.\n"
+    "Output format (strict):\n"
+    "Finding: <one sentence>\n"
+    "Evidence: <yield value + goal + ticket/manual context>\n"
+    "Summary: <ticket required yes/no and why>\n"
+    "Do not invent data."
+)
+
+YIELD_PROMPT_NATURAL = (
+    "You are Agent Yield for tools that are currently UP. "
+    "Use only local data/ sources and start with get_entity_full_context.\n"
+    f"The yield goal is {settings.yield_threshold:.0f}%. Confirm status and compare yield "
+    "to the goal. Include any current ticket/manual context from RAG evidence.\n"
+    "If yield is below goal, recommend escalation ticket; otherwise say to continue "
+    "sustaining. Keep it natural, concise, and end with 'Summary:'."
+)
+
+ESCALATION_PROMPT_BASE = (
+    "You are Escalation. Read prior specialist findings.\n"
+    "If they require a ticket, call create_mtp_ticket exactly once and report the id.\n"
+    "If no ticket is needed, say no escalation is necessary.\n"
+    "Output format (strict):\n"
+    "Escalation: <action/no action>\n"
+    "Summary: <one sentence>"
+)
+
+ESCALATION_PROMPT_NATURAL = (
+    "You are the Escalation step. Read the specialist's conclusion and open exactly one "
+    "MTP/down-tool ticket only when required, then report the ticket id naturally. "
+    "If no escalation is needed, say so clearly in one sentence."
 )
 
 
-def build_technician_agent(model):
-    """The Technician ReAct agent (DOWN path)."""
-    return create_react_agent(
-        model, TECHNICIAN_TOOLS, prompt=TECHNICIAN_PROMPT, name="technician"
-    )
+def build_technician_agent(model, prompt_style: str | None = None):
+    """Technician ReAct agent with selectable prompt style."""
+    style = _normalize_style(prompt_style)
+    prompt = TECHNICIAN_PROMPT_BASE if style == "base" else TECHNICIAN_PROMPT_NATURAL
+    return create_react_agent(model, TECHNICIAN_TOOLS, prompt=prompt, name="technician")
 
 
-def build_yield_agent(model):
-    """The Yield ReAct agent (UP path)."""
-    return create_react_agent(model, YIELD_TOOLS, prompt=YIELD_PROMPT, name="yield")
+def build_yield_agent(model, prompt_style: str | None = None):
+    """Yield ReAct agent with selectable prompt style."""
+    style = _normalize_style(prompt_style)
+    prompt = YIELD_PROMPT_BASE if style == "base" else YIELD_PROMPT_NATURAL
+    return create_react_agent(model, YIELD_TOOLS, prompt=prompt, name="yield")
 
 
-def build_escalation_agent(model):
-    """The Escalation ReAct agent (shared action step)."""
-    return create_react_agent(
-        model, ESCALATION_TOOLS, prompt=ESCALATION_PROMPT, name="escalation"
-    )
+def build_escalation_agent(model, prompt_style: str | None = None):
+    """Escalation ReAct agent with selectable prompt style."""
+    style = _normalize_style(prompt_style)
+    prompt = ESCALATION_PROMPT_BASE if style == "base" else ESCALATION_PROMPT_NATURAL
+    return create_react_agent(model, ESCALATION_TOOLS, prompt=prompt, name="escalation")
