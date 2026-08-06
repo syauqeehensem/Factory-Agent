@@ -17,6 +17,7 @@ from factory_agent.project_data import PROJECT_DATA
 from factory_agent.tools import (
     create_mtp_ticket,
     get_data_status,
+    get_entity_full_context,
     get_entity_status,
     get_entity_ticket_summary,
     get_entity_yield,
@@ -67,6 +68,15 @@ def test_entity_status_for_known_entity():
 def test_entity_ticket_summary_for_known_entity():
     out = get_entity_ticket_summary.invoke({"entity": "TCB702", "limit": 3})
     assert "Tickets for TCB702" in out or "No ticket" in out
+
+
+def test_entity_full_context_includes_all_sections():
+    out = get_entity_full_context.invoke({"entity": "TCB702", "manual_top_k": 1})
+    assert "Integrated context for TCB702" in out
+    assert "Status:" in out
+    assert "Tickets:" in out
+    assert "Yield:" in out
+    assert "Manual evidence" in out
 
 
 def test_entity_yield_below_goal_is_fail():

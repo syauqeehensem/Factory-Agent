@@ -57,6 +57,45 @@ def get_entity_ticket_summary(entity: str, limit: int = 6) -> str:
     return PROJECT_DATA.entity_ticket_summary(entity, limit=limit)
 
 
+def _best_manual_query_for_entity(entity: str) -> str:
+    """Choose the best troubleshooting query using known ticket errors first."""
+    key = entity.strip().upper()
+    rows = [r for r in PROJECT_DATA.ticket_rows if r.entity == key]
+    for row in rows:
+        err = (row.error or "").strip()
+        if err and err.lower() != "unknown":
+            return err
+    if rows:
+        fallback = (rows[0].error or "").strip()
+        if fallback:
+            return fallback
+    return f"{key} troubleshooting"
+
+
+@tool
+def get_entity_full_context(entity: str, manual_top_k: int = 2) -> str:
+    """Return integrated status+ticket+yield+manual evidence for one entity. Read-only."""
+    key = entity.strip().upper()
+    if not key:
+        return "Please provide an entity code, e.g. TCB706 or TSX509."
+
+    top_k = max(1, min(int(manual_top_k), 4))
+    manual_query = _best_manual_query_for_entity(key)
+
+    status_text = PROJECT_DATA.entity_status(key)
+    ticket_text = PROJECT_DATA.entity_ticket_summary(key, limit=4)
+    yield_text = YIELD_DATASET.entity_yield_text(key)
+    manual_text = MANUAL_INDEX.search(manual_query, top_k=top_k)
+
+    return (
+        f"Integrated context for {key}:\n"
+        f"- Status: {status_text}\n"
+        f"- Tickets: {ticket_text}\n"
+        f"- Yield: {yield_text}\n"
+        f"- Manual evidence (query: {manual_query}): {manual_text}"
+    )
+
+
 @tool
 def search_technician_manuals(question: str, top_k: int = 3) -> str:
     """Retrieve troubleshooting snippets from technician manuals for an error/symptom. Read-only."""
@@ -101,20 +140,26 @@ def create_mtp_ticket(entity: str, reason: str, ticket_type: str = "down-tool") 
 # Tool sets bound to each node in the graph.
 TECHNICIAN_TOOLS = [
     get_data_status,
+    get_entity_full_context,
     get_entity_status,
     get_entity_ticket_summary,
+    get_entity_yield,
     search_technician_manuals,
     list_technician_documents,
 ]
 
 YIELD_TOOLS = [
     get_data_status,
+    get_entity_full_context,
     get_entity_status,
+    get_entity_ticket_summary,
     get_entity_yield,
+    search_technician_manuals,
     list_yield_below_goal,
 ]
 
 ESCALATION_TOOLS = [
+    get_entity_full_context,
     get_entity_status,
     get_entity_ticket_summary,
     get_entity_yield,
