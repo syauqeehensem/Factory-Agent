@@ -61,6 +61,22 @@ python cli.py
 python run_demo.py --status
 python run_demo.py --graph
 python -m pytest tests/test_smoke.py -q
+python tests/eval_reasoning.py --count 100
+python tests/eval_reasoning.py --count 100 --style natural --attempt-live
+```
+
+## Reasoning evaluation
+
+Use `tests/eval_reasoning.py` to benchmark reasoning quality over batch prompts.
+
+- Builds up to 100 prompts from known entities plus a small unknown-entity slice.
+- Scores route accuracy, escalation accuracy, grounding coverage, latency, and fallback rate.
+- Writes report artifacts to `tests/reports/` as JSON + Markdown.
+
+Example:
+
+```bash
+python tests/eval_reasoning.py --count 100 --style natural --attempt-live --out-prefix weekly
 ```
 
 ## Important environment variables

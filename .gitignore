@@ -16,6 +16,7 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
+tests/reports/
 
 # OS / editor cruft
 .DS_Store
