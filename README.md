@@ -24,9 +24,12 @@ No external factory system writes are performed. Ticket creation is simulated in
 
 - Base style (`/style base`) is deterministic and does not wait on model latency.
 - Natural style (`/style natural`) has a soft UI timeout and falls back to local data.
+- Runtime profiles (`/profile fast`, `/profile rich`) let you switch between
+	speed-first and richer model-first behavior in one command.
+- Agent trace visibility can be toggled live (`/trace on|off|toggle`).
 - Session response cache speeds repeated prompts.
 - RAG and manual search caches reduce repeated retrieval cost.
-- Quick action buttons in UI for common flows.
+- Quick action buttons in UI for common flows, profile switching, and trace toggling.
 - Runtime commands for status and reload.
 
 ## Quick start
@@ -43,6 +46,9 @@ python -m streamlit run chat_ui.py
 
 - `/style base`
 - `/style natural`
+- `/profile fast`
+- `/profile rich`
+- `/trace on|off|toggle`
 - `/status`
 - `/rag`
 - `/reload`

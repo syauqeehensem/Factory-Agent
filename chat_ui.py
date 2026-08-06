@@ -43,6 +43,68 @@ SAMPLE_DOWN_ENTITY = "TCB702"
 SAMPLE_UP_ENTITY = "TSX509"
 
 
+def _runtime_profile_presets() -> dict[str, dict[str, object]]:
+    """Return runtime profile presets for response smoothness tuning."""
+    fast_timeout = max(1.0, float(settings.ui_soft_timeout_seconds))
+    rich_timeout = max(14.0, fast_timeout + 8.0)
+    return {
+        "fast": {
+            "soft_timeout_seconds": fast_timeout,
+            "manual_top_k": 2,
+            "show_agent_trace": False,
+        },
+        "rich": {
+            "soft_timeout_seconds": rich_timeout,
+            "manual_top_k": 3,
+            "show_agent_trace": True,
+        },
+    }
+
+
+def _apply_runtime_profile(name: str, announce: bool = True) -> str:
+    """Apply a runtime profile to session-scoped responsiveness knobs."""
+    candidate = (name or "").strip().lower()
+    presets = _runtime_profile_presets()
+    if candidate not in presets:
+        return "Invalid profile. Use /profile fast or /profile rich."
+
+    preset = presets[candidate]
+    st.session_state.runtime_profile = candidate
+    st.session_state.soft_timeout_seconds = float(preset["soft_timeout_seconds"])
+    st.session_state.manual_top_k = int(preset["manual_top_k"])
+    st.session_state.show_agent_trace = bool(preset["show_agent_trace"])
+    st.session_state.response_cache = {}
+
+    if not announce:
+        return ""
+
+    trace_label = "on" if st.session_state.show_agent_trace else "off"
+    return (
+        f"Runtime profile switched to: {candidate}. "
+        f"Soft timeout={st.session_state.soft_timeout_seconds:.0f}s, "
+        f"local context top_k={st.session_state.manual_top_k}, "
+        f"agent trace={trace_label}."
+    )
+
+
+def _set_trace_mode(mode: str) -> str:
+    """Enable/disable trace panels without restarting the app."""
+    candidate = (mode or "").strip().lower()
+    if candidate in {"on", "1", "true", "yes"}:
+        st.session_state.show_agent_trace = True
+    elif candidate in {"off", "0", "false", "no"}:
+        st.session_state.show_agent_trace = False
+    elif candidate in {"toggle", ""}:
+        st.session_state.show_agent_trace = not bool(
+            st.session_state.get("show_agent_trace", settings.ui_show_agent_trace)
+        )
+    else:
+        return "Invalid trace mode. Use /trace on, /trace off, or /trace toggle."
+
+    state = "on" if st.session_state.show_agent_trace else "off"
+    return f"Agent trace is now: {state}."
+
+
 def _inject_theme() -> None:
     """Apply an industrial visual theme with clear hierarchy and spacing."""
     st.markdown(
@@ -171,6 +233,11 @@ def _rag_state_label() -> str:
 def _render_status_strip() -> None:
     """Show lightweight runtime state for transparency and faster debugging."""
     style = st.session_state.get("prompt_style", "base")
+    profile = st.session_state.get("runtime_profile", "fast")
+    timeout_seconds = float(
+        st.session_state.get("soft_timeout_seconds", settings.ui_soft_timeout_seconds)
+    )
+    trace_on = bool(st.session_state.get("show_agent_trace", settings.ui_show_agent_trace))
     llm_state = "enabled" if settings.llm_enabled else "missing key"
     rag_state = _rag_state_label()
     cache_items = len(st.session_state.get("response_cache", {}))
@@ -181,6 +248,9 @@ def _render_status_strip() -> None:
         (
             "<div class='tcb-status-strip'>"
             f"<span class='tcb-chip'>Style: <strong>{style}</strong></span>"
+            f"<span class='tcb-chip'>Profile: <strong>{profile}</strong></span>"
+            f"<span class='tcb-chip'>Soft timeout: <strong>{timeout_seconds:.0f}s</strong></span>"
+            f"<span class='tcb-chip'>Trace: <strong>{'on' if trace_on else 'off'}</strong></span>"
             f"<span class='tcb-chip'>LLM: <strong>{llm_state}</strong></span>"
             f"<span class='tcb-chip'>RAG: <strong>{rag_state}</strong></span>"
             f"<span class='tcb-chip'>UI cache: <strong>{cache_items}</strong> ({cache_hits}H/{cache_misses}M)</span>"
@@ -195,6 +265,10 @@ def _render_quick_actions() -> str | None:
     queued: str | None = None
     current_style = st.session_state.get("prompt_style", "base")
     switch_to = "natural" if current_style == "base" else "base"
+    current_profile = st.session_state.get("runtime_profile", "fast")
+    profile_target = "rich" if current_profile == "fast" else "fast"
+    trace_on = bool(st.session_state.get("show_agent_trace", settings.ui_show_agent_trace))
+    trace_target = "off" if trace_on else "on"
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -209,6 +283,14 @@ def _render_quick_actions() -> str | None:
     with col4:
         if st.button(f"Switch to {switch_to}", key="quick_style"):
             queued = f"/style {switch_to}"
+
+    col5, col6 = st.columns(2)
+    with col5:
+        if st.button(f"Profile {profile_target}", key="quick_profile"):
+            queued = f"/profile {profile_target}"
+    with col6:
+        if st.button(f"Trace {trace_target}", key="quick_trace"):
+            queued = f"/trace {trace_target}"
 
     return queued
 
@@ -267,10 +349,19 @@ def _init_session() -> None:
         st.session_state.cache_hits = 0
     if "cache_misses" not in st.session_state:
         st.session_state.cache_misses = 0
+    if "runtime_profile" not in st.session_state:
+        st.session_state.runtime_profile = "fast"
+    if "soft_timeout_seconds" not in st.session_state:
+        st.session_state.soft_timeout_seconds = float(settings.ui_soft_timeout_seconds)
+    if "manual_top_k" not in st.session_state:
+        st.session_state.manual_top_k = 2
+    if "show_agent_trace" not in st.session_state:
+        st.session_state.show_agent_trace = bool(settings.ui_show_agent_trace)
     if st.session_state.get("initialized"):
         return
     st.session_state.initialized = True
     _reset_state()
+    _apply_runtime_profile(st.session_state.runtime_profile, announce=False)
 
 
 def _switch_prompt_style(style: str) -> str:
@@ -295,7 +386,7 @@ def _reload_runtime_data() -> str:
     return "Runtime data and indexes reloaded."
 
 
-def _deterministic_entity_reply(question: str, reason: str = "") -> str:
+def _deterministic_entity_reply(question: str, reason: str = "", manual_top_k: int = 2) -> str:
     """Return a fast local-data answer without any LLM call."""
     entity = _extract_entity(question)
     if not entity:
@@ -305,7 +396,8 @@ def _deterministic_entity_reply(question: str, reason: str = "") -> str:
             f"{note}"
         )
 
-    context = get_entity_full_context.invoke({"entity": entity, "manual_top_k": 2})
+    top_k = max(1, min(int(manual_top_k), 4))
+    context = get_entity_full_context.invoke({"entity": entity, "manual_top_k": top_k})
     lines = [f"Mode: deterministic local-data fallback{f' ({reason})' if reason else ''}", context]
     return "\n\n".join(lines)
 
@@ -359,7 +451,7 @@ def _cache_put(key: tuple[str, str], result: dict) -> None:
     cache[key] = payload
 
 
-def _run_graph_turn(question: str, graph, thread_id: str) -> dict:
+def _run_graph_turn(question: str, graph, thread_id: str, fallback_manual_top_k: int) -> dict:
     """Run one natural-style request through the graph."""
     if graph is None:
         return {
@@ -399,21 +491,33 @@ def _run_graph_turn(question: str, graph, thread_id: str) -> dict:
                 "meta": {"path": "auth-error"},
             }
         elif "timed out" in lowered or "timeout" in lowered:
-            reply = _deterministic_entity_reply(question, reason="model timeout")
+            reply = _deterministic_entity_reply(
+                question,
+                reason="model timeout",
+                manual_top_k=fallback_manual_top_k,
+            )
             return {
                 "reply": reply,
                 "steps": [{"node": "fallback", "content": reply}],
                 "meta": {"path": "model-timeout"},
             }
         elif "rate limit" in lowered or "429" in lowered:
-            reply = _deterministic_entity_reply(question, reason="rate limit")
+            reply = _deterministic_entity_reply(
+                question,
+                reason="rate limit",
+                manual_top_k=fallback_manual_top_k,
+            )
             return {
                 "reply": reply,
                 "steps": [{"node": "fallback", "content": reply}],
                 "meta": {"path": "rate-limit"},
             }
         else:
-            reply = _deterministic_entity_reply(question, reason="temporary model issue")
+            reply = _deterministic_entity_reply(
+                question,
+                reason="temporary model issue",
+                manual_top_k=fallback_manual_top_k,
+            )
             return {
                 "reply": reply,
                 "steps": [{"node": "fallback", "content": reply}],
@@ -440,26 +544,35 @@ def _run_turn(question: str) -> dict:
         return cached
 
     started = time.perf_counter()
+    manual_top_k = max(1, min(int(st.session_state.get("manual_top_k", 2)), 4))
     if style == "base":
         # Base mode stays deterministic and local for guaranteed responsiveness.
-        reply = _deterministic_entity_reply(question, reason="base mode")
+        reply = _deterministic_entity_reply(
+            question,
+            reason="base mode",
+            manual_top_k=manual_top_k,
+        )
         result = {
             "reply": reply,
             "steps": [{"node": "fallback", "content": reply}],
             "meta": {"path": "base-deterministic"},
         }
     else:
-        timeout_seconds = max(1.0, float(settings.ui_soft_timeout_seconds))
+        timeout_seconds = max(
+            1.0,
+            float(st.session_state.get("soft_timeout_seconds", settings.ui_soft_timeout_seconds)),
+        )
         graph = st.session_state.get("graph")
         thread_id = str(st.session_state.get("thread_id", ""))
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-turn")
-        future = pool.submit(_run_graph_turn, question, graph, thread_id)
+        future = pool.submit(_run_graph_turn, question, graph, thread_id, manual_top_k)
         try:
             result = future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
             reply = _deterministic_entity_reply(
                 question,
                 reason=f"UI soft timeout ({timeout_seconds:.0f}s)",
+                manual_top_k=manual_top_k,
             )
             result = {
                 "reply": reply,
@@ -485,6 +598,11 @@ def _runtime_status_text() -> str:
     style = st.session_state.get("prompt_style", "base")
     graph_state = "ready" if st.session_state.get("graph") is not None else "unavailable"
     llm_state = "configured" if settings.llm_enabled else "missing OPENAI_API_KEY"
+    runtime_profile = st.session_state.get("runtime_profile", "fast")
+    soft_timeout = float(
+        st.session_state.get("soft_timeout_seconds", settings.ui_soft_timeout_seconds)
+    )
+    trace_label = "on" if st.session_state.get("show_agent_trace", settings.ui_show_agent_trace) else "off"
     cache_size = len(st.session_state.get("response_cache", {}))
     hits = int(st.session_state.get("cache_hits", 0))
     misses = int(st.session_state.get("cache_misses", 0))
@@ -492,6 +610,9 @@ def _runtime_status_text() -> str:
     return (
         "Runtime status:\n"
         f"- Prompt style: {style}\n"
+        f"- Runtime profile: {runtime_profile}\n"
+        f"- Soft timeout: {soft_timeout:.0f}s\n"
+        f"- Agent trace: {trace_label}\n"
         f"- Graph: {graph_state}\n"
         f"- LLM: {llm_state}\n"
         f"- UI response cache: {cache_size} item(s), hits={hits}, misses={misses}\n"
@@ -512,6 +633,9 @@ def _handle_command(prompt: str) -> str | None:
             "Commands:\n"
             "- /style base\n"
             "- /style natural\n"
+            "- /profile fast\n"
+            "- /profile rich\n"
+            "- /trace on|off|toggle\n"
             "- /status\n"
             "- /rag\n"
             "- /reload"
@@ -523,6 +647,15 @@ def _handle_command(prompt: str) -> str | None:
         return _switch_prompt_style(parts[1])
     if lower in {"/status", "/health"}:
         return _runtime_status_text()
+    if lower.startswith("/profile"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2:
+            return "Usage: /profile fast or /profile rich"
+        return _apply_runtime_profile(parts[1])
+    if lower.startswith("/trace"):
+        parts = text.split(maxsplit=1)
+        mode = parts[1] if len(parts) > 1 else "toggle"
+        return _set_trace_mode(mode)
     if lower == "/rag":
         return KNOWLEDGE_RAG.status_text()
     if lower in {"/reload", "/refresh"}:
@@ -552,7 +685,8 @@ def _render_assistant(message: dict) -> None:
         st.caption(caption)
 
     steps = message.get("steps") or []
-    if settings.ui_show_agent_trace and steps:
+    show_trace = bool(st.session_state.get("show_agent_trace", settings.ui_show_agent_trace))
+    if show_trace and steps:
         with st.expander("Agent trace", expanded=False):
             for step in steps:
                 node = step.get("node", "")
@@ -574,7 +708,7 @@ def main() -> None:
         st.caption(
             "Enter an entity code — status routes it to Agent Technician (DOWN) or Agent Yield (UP). "
             f"Style: {st.session_state.prompt_style}. "
-            "Use /style, /status, /rag, /reload, or /help."
+            "Use /style, /profile, /trace, /status, /rag, /reload, or /help."
         )
     with top_right:
         if st.button("New Chat"):
