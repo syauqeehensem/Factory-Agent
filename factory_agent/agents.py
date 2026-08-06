@@ -7,7 +7,7 @@ Supports two prompt modes:
 
 from __future__ import annotations
 
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 from .config import settings
 from .tools import ESCALATION_TOOLS, TECHNICIAN_TOOLS, YIELD_TOOLS
@@ -90,18 +90,18 @@ def build_technician_agent(model, prompt_style: str | None = None):
     """Technician ReAct agent with selectable prompt style."""
     style = _normalize_style(prompt_style)
     prompt = TECHNICIAN_PROMPT_BASE if style == "base" else TECHNICIAN_PROMPT_NATURAL
-    return create_react_agent(model, TECHNICIAN_TOOLS, prompt=prompt, name="technician")
+    return create_agent(model=model, tools=TECHNICIAN_TOOLS, system_prompt=prompt, name="technician")
 
 
 def build_yield_agent(model, prompt_style: str | None = None):
     """Yield ReAct agent with selectable prompt style."""
     style = _normalize_style(prompt_style)
     prompt = YIELD_PROMPT_BASE if style == "base" else YIELD_PROMPT_NATURAL
-    return create_react_agent(model, YIELD_TOOLS, prompt=prompt, name="yield")
+    return create_agent(model=model, tools=YIELD_TOOLS, system_prompt=prompt, name="yield")
 
 
 def build_escalation_agent(model, prompt_style: str | None = None):
     """Escalation ReAct agent with selectable prompt style."""
     style = _normalize_style(prompt_style)
     prompt = ESCALATION_PROMPT_BASE if style == "base" else ESCALATION_PROMPT_NATURAL
-    return create_react_agent(model, ESCALATION_TOOLS, prompt=prompt, name="escalation")
+    return create_agent(model=model, tools=ESCALATION_TOOLS, system_prompt=prompt, name="escalation")
