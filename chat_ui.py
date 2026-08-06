@@ -125,11 +125,32 @@ def _run_turn(question: str) -> dict:
                 if msgs and msgs[-1].content.strip():
                     steps.append({"node": node, "content": msgs[-1].content.strip()})
     except Exception as exc:  # noqa: BLE001 - keep UI responsive on API/runtime errors
-        hint = ""
         text = str(exc)
-        if "401" in text or "api_key" in text.lower() or "authentication" in text.lower():
-            hint = " Check OPENAI_API_KEY in .env (invalid or expired keys return 401)."
-        return {"reply": f"Something went wrong: {exc}.{hint}", "steps": []}
+        lowered = text.lower()
+
+        if "401" in text or "api_key" in lowered or "authentication" in lowered:
+            fallback = (
+                "I cannot authenticate with the model right now. "
+                "Please check OPENAI_API_KEY in .env, then try again."
+            )
+        elif "timed out" in lowered or "timeout" in lowered:
+            fallback = (
+                "I am hitting a model timeout right now. "
+                "Please retry in a few seconds and I will continue from there."
+            )
+        elif "rate limit" in lowered or "429" in lowered:
+            fallback = (
+                "I reached the model rate limit for the moment. "
+                "Please retry shortly."
+            )
+        else:
+            fallback = "I hit a temporary model issue. Please try your question again."
+
+        spoken = [s["content"] for s in steps if s["node"] != "supervisor"]
+        if spoken:
+            partial = "\n\n".join(spoken)
+            return {"reply": f"{partial}\n\n{fallback}", "steps": steps}
+        return {"reply": fallback, "steps": []}
 
     # A conversational reply = what the specialists said; routing chatter stays hidden.
     spoken = [s["content"] for s in steps if s["node"] != "supervisor"]
