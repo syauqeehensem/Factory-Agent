@@ -3,6 +3,10 @@
 
 # Local/proprietary datasets (PnC) — keep only on your machine
 Project Data/
+data/
+
+# Pasted screenshots (may contain confidential data)
+image (*).png
 
 # Python
 __pycache__/

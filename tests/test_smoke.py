@@ -1,7 +1,7 @@
-"""Smoke tests for the Project-Data-only two-agent pipeline.
+"""Smoke tests for the entity-driven Equipment Performance Sustaining pipeline.
 
-These tests avoid live model calls and validate tool/data wiring plus graph
-structure only.
+These tests avoid live model calls and validate tool/data wiring, the
+deterministic status router, and graph structure only.
 """
 
 from __future__ import annotations
@@ -12,109 +12,95 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from factory_agent import build_graph
+from factory_agent.graph import _extract_entity
+from factory_agent.project_data import PROJECT_DATA
 from factory_agent.tools import (
+    create_mtp_ticket,
+    get_data_status,
     get_entity_status,
     get_entity_ticket_summary,
+    get_entity_yield,
     get_line_status_snapshot,
-    get_project_data_status,
-    get_technician_manual_status,
-    get_tool_yield_summary,
-    get_yield_dataset_status,
     list_technician_documents,
-    list_yield_hotspots,
+    list_yield_below_goal,
     search_technician_manuals,
-    summarize_recent_yield_vs_baseline,
-    summarize_open_tickets,
 )
 
 
-def setup():
-    # Keep this hook for standalone execution symmetry.
-    return None
-
-
 def test_graph_compiles_with_expected_nodes():
-    setup()
     from langchain_openai import ChatOpenAI
 
     dummy = ChatOpenAI(model="gpt-4o-mini", api_key="sk-dummy-compile-only")
     graph = build_graph(dummy)  # no network — construction only
     nodes = set(graph.get_graph().nodes)
-    assert {"supervisor", "agent_technician", "agent_yield"}.issubset(nodes)
+    assert {"status_check", "technician", "yield", "escalation"}.issubset(nodes)
 
 
-def test_yield_dataset_status_reports_loaded_or_unavailable():
-    setup()
-    out = get_yield_dataset_status.invoke({})
+def test_extract_entity_from_text():
+    assert _extract_entity("status of tcb706 please") == "TCB706"
+    assert _extract_entity("TSX509") == "TSX509"
+    assert _extract_entity("no code here") == ""
+
+
+def test_status_check_values_up_and_down():
+    assert PROJECT_DATA.entity_status_value("TCB706") == "UP"
+    assert PROJECT_DATA.entity_status_value("TCB702") == "DOWN"
+
+
+def test_data_status_reports_sources():
+    out = get_data_status.invoke({})
+    assert "Data:" in out
     assert "Yield dataset" in out
-
-
-def test_project_data_status_reports_loaded_or_unavailable():
-    setup()
-    out = get_project_data_status.invoke({})
-    assert "Project Data:" in out
+    assert "Technician manual" in out
 
 
 def test_line_status_snapshot_returns_summary_text():
-    setup()
     out = get_line_status_snapshot.invoke({"max_down": 5})
     assert "Line status" in out or "unavailable" in out
 
 
 def test_entity_status_for_known_entity():
-    setup()
-    out = get_entity_status.invoke({"entity": "TSX509"})
-    assert "Entity TSX509" in out
+    out = get_entity_status.invoke({"entity": "TCB706"})
+    assert "Entity TCB706" in out
 
 
 def test_entity_ticket_summary_for_known_entity():
-    setup()
-    out = get_entity_ticket_summary.invoke({"entity": "TSX509", "limit": 3})
-    assert "Tickets for TSX509" in out
+    out = get_entity_ticket_summary.invoke({"entity": "TCB702", "limit": 3})
+    assert "Tickets for TCB702" in out or "No ticket" in out
 
 
-def test_open_ticket_summary_returns_text():
-    setup()
-    out = summarize_open_tickets.invoke({"top_n": 5})
-    assert "Ticket" in out
+def test_entity_yield_below_goal_is_fail():
+    out = get_entity_yield.invoke({"entity": "TCB706"})
+    assert "FAIL" in out
+    assert "34.2%" in out
 
 
-def test_tool_yield_summary_for_known_entity():
-    setup()
-    out = get_tool_yield_summary.invoke({"entity": "TSX501"})
-    assert "TSX501" in out
+def test_entity_yield_at_goal_is_pass():
+    out = get_entity_yield.invoke({"entity": "TCB003"})
+    assert "PASS" in out
 
 
-def test_technician_manual_status_reports_state():
-    setup()
-    out = get_technician_manual_status.invoke({})
-    assert "Technician manual index" in out
+def test_list_yield_below_goal_flags_low_tool():
+    out = list_yield_below_goal.invoke({"limit": 10})
+    assert "TCB706" in out
 
 
 def test_list_technician_documents_returns_text():
-    setup()
     out = list_technician_documents.invoke({})
     assert out
 
 
 def test_search_technician_manuals_returns_text():
-    setup()
     out = search_technician_manuals.invoke(
-        {"question": "vision error on TSX", "top_k": 2}
+        {"question": "Optics Table PR Vision Error", "top_k": 2}
     )
     assert out
 
 
-def test_yield_hotspot_listing_returns_text():
-    setup()
-    out = list_yield_hotspots.invoke({"max_avg_yield": 0.005, "min_lots": 3, "limit": 5})
-    assert out
-
-
-def test_recent_yield_vs_baseline_returns_text():
-    setup()
-    out = summarize_recent_yield_vs_baseline.invoke({"hours": 24, "top_n": 3})
-    assert out
+def test_create_mtp_ticket_returns_id():
+    out = create_mtp_ticket.invoke({"entity": "TCB706", "reason": "yield below goal"})
+    assert "MTP-" in out
+    assert "TCB706" in out
 
 
 if __name__ == "__main__":

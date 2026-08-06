@@ -1,11 +1,12 @@
-"""Interactive console: hand situations to the agent team, one at a time.
+"""Interactive console: enter an entity, get the sustaining decision.
 
 Run it::
 
     python cli.py
 
-Type a Project Data question (status/tickets/manual/yield) and watch the two
-specialists collaborate. Commands: /reset and /quit.
+Type a tool/entity code (e.g. TCB706). The status check routes DOWN tools to
+Agent Technician and UP tools to Agent Yield, then Escalation opens a ticket if
+one is required. Commands: /reset and /quit.
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ def _run(graph, text: str, thread_id: str) -> None:
 
 def main() -> int:
     print("=" * 64)
-    print("  TCB Chatbot — interactive two-agent console")
+    print("  TCB Chatbot — Equipment Performance Sustaining")
     print("=" * 64)
     if not settings.llm_enabled:
         print("No OPENAI_API_KEY found. Add one to .env to run live answers.")
@@ -69,7 +70,7 @@ def main() -> int:
 
     while True:
         try:
-            text = input("floor > ").strip()
+            text = input("Input entity > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nBye!")
             return 0

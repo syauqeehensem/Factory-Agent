@@ -27,5 +27,8 @@ class FactoryState(TypedDict):
 
     # The growing conversation/scratchpad. add_messages appends + de-duplicates.
     messages: Annotated[list[AnyMessage], add_messages]
-    # The Floor Supervisor writes the next agent to run, or "FINISH".
+    # The status check writes the next node to run, or "FINISH".
     next: str
+    # The entity under review and its looked-up UP/DOWN status.
+    entity: str
+    status: str

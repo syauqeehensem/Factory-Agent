@@ -20,14 +20,16 @@ from factory_agent import build_graph
 from factory_agent.config import settings
 from factory_agent.llm import LLMNotConfigured, build_chat_model
 from factory_agent.project_data import PROJECT_DATA
+from factory_agent.tickets import TICKET_STORE
 from factory_agent.yield_data import YIELD_DATASET
 
 CHECKPOINTER = MemorySaver()
 
 NODE_LABELS = {
-    "supervisor": "Floor Supervisor",
-    "agent_technician": "Agent Technician",
-    "agent_yield": "Agent Yield",
+    "status_check": "Status check",
+    "technician": "Agent Technician",
+    "yield": "Agent Yield",
+    "escalation": "Escalation",
 }
 
 
@@ -55,8 +57,8 @@ def _render_brand_header() -> None:
     with col_text:
         st.title(settings.app_title)
         st.caption(
-            "Human-like, memory-aware multi-agent manufacturing assistant "
-            "powered by Project Data and secure tool use."
+            "Equipment Performance Sustaining — enter an entity and the agents "
+            "check status, tickets, and yield, then escalate if needed."
         )
 
 
@@ -85,6 +87,7 @@ def _reset_state() -> None:
     """Reset graph and chat history for a new session."""
     PROJECT_DATA.reload()
     YIELD_DATASET.reload()
+    TICKET_STORE.reset()
     st.session_state.chat_log = []
     st.session_state.thread_id = str(uuid4())
     st.session_state.graph, st.session_state.startup_error = _start_graph()
@@ -146,14 +149,14 @@ def _run_turn(question: str) -> dict:
         else:
             fallback = "I hit a temporary model issue. Please try your question again."
 
-        spoken = [s["content"] for s in steps if s["node"] != "supervisor"]
+        spoken = [s["content"] for s in steps]
         if spoken:
             partial = "\n\n".join(spoken)
             return {"reply": f"{partial}\n\n{fallback}", "steps": steps}
         return {"reply": fallback, "steps": []}
 
-    # A conversational reply = what the specialists said; routing chatter stays hidden.
-    spoken = [s["content"] for s in steps if s["node"] != "supervisor"]
+    # A conversational reply = what the specialists and escalation said.
+    spoken = [s["content"] for s in steps]
     if spoken:
         reply = "\n\n".join(spoken)
     elif steps:
@@ -176,7 +179,7 @@ def main() -> None:
 
     top_left, top_right = st.columns([4, 1])
     with top_left:
-        st.caption("Project-Data-only assistants: Agent Technician + Agent Yield")
+        st.caption("Enter an entity code — status routes it to Agent Technician (DOWN) or Agent Yield (UP).")
     with top_right:
         if st.button("New Chat"):
             _reset_state()
@@ -193,7 +196,7 @@ def main() -> None:
                 st.markdown(message["content"])
 
     prompt = st.chat_input(
-        "Ask naturally: line status, ticket issue, manual troubleshooting, or yield trend..."
+        "Input entity (e.g. TCB706)..."
     )
     if not prompt:
         return

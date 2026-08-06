@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PROJECT_DATA_ROOT = PROJECT_ROOT / "Project Data"
+# Real data lives under data/ (status.csv, mtp.csv, yield.csv, technician PDFs).
+DATA_ROOT = PROJECT_ROOT / "data"
 
 
 def _load_dotenv() -> None:
@@ -62,30 +63,24 @@ class Settings:
     )
 
     # --- Project data ------------------------------------------------------
-    project_data_dir: str = field(
-        default_factory=lambda: os.getenv("PROJECT_DATA_DIR", str(PROJECT_DATA_ROOT))
-    )
+    data_dir: str = field(default_factory=lambda: os.getenv("DATA_DIR", str(DATA_ROOT)))
     status_csv_path: str = field(
-        default_factory=lambda: os.getenv(
-            "STATUS_CSV_PATH", str(PROJECT_DATA_ROOT / "status.csv")
-        )
+        default_factory=lambda: os.getenv("STATUS_CSV_PATH", str(DATA_ROOT / "status.csv"))
     )
     mtp_csv_path: str = field(
-        default_factory=lambda: os.getenv("MTP_CSV_PATH", str(PROJECT_DATA_ROOT / "mtp.csv"))
+        default_factory=lambda: os.getenv("MTP_CSV_PATH", str(DATA_ROOT / "mtp.csv"))
     )
     technician_docs_dir: str = field(
-        default_factory=lambda: os.getenv(
-            "TECHNICIAN_DOCS_DIR", str(PROJECT_DATA_ROOT / "Technician")
-        )
+        default_factory=lambda: os.getenv("TECHNICIAN_DOCS_DIR", str(DATA_ROOT))
     )
-    # Optional path to yield data CSV used by the analytics tools.
     yield_csv_path: str = field(
-        default_factory=lambda: os.getenv(
-            "YIELD_CSV_PATH",
-            str(PROJECT_DATA_ROOT / "Yield" / "Yield data by tools.csv"),
-        )
+        default_factory=lambda: os.getenv("YIELD_CSV_PATH", str(DATA_ROOT / "yield.csv"))
     )
     manual_top_k: int = field(default_factory=lambda: int(os.getenv("MANUAL_TOP_K", "3")))
+    # Yield goal: tools at/above this percent are healthy; below triggers escalation.
+    yield_threshold: float = field(
+        default_factory=lambda: float(os.getenv("YIELD_THRESHOLD", "50"))
+    )
 
     # --- UI branding -------------------------------------------------------
     app_title: str = field(default_factory=lambda: os.getenv("APP_TITLE", "TCB Chatbot"))

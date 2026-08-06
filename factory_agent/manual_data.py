@@ -41,10 +41,11 @@ class ManualIndex:
             self.load_error = f"folder not found at {self.root_dir}"
             return
 
+        # Only index technician docs; the data CSVs (status/mtp/yield) are not manuals.
         files = sorted(
             p
             for p in self.root_dir.rglob("*")
-            if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx", ".txt", ".md", ".csv"}
+            if p.is_file() and p.suffix.lower() in {".pdf", ".xlsx", ".txt", ".md"}
         )
         if not files:
             self.load_error = f"no supported files found under {self.root_dir}"

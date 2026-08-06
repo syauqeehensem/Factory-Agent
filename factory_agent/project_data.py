@@ -58,7 +58,7 @@ class ProjectDataStore:
             if self.ticket_error is None
             else f"mtp.csv unavailable: {self.ticket_error}"
         )
-        return f"Project Data: {status_part}; {ticket_part}."
+        return f"Data: {status_part}; {ticket_part}."
 
     def status_snapshot(self, max_down: int = 8) -> str:
         if self.status_error:
@@ -94,6 +94,23 @@ class ProjectDataStore:
             known = ", ".join(sorted({r.entity for r in self.status_rows})[:20])
             return f"Entity {key} not found in status.csv. Known examples: {known}."
         return f"Entity {row.entity} is currently {row.status}."
+
+    def entity_status_value(self, entity: str) -> str | None:
+        """Return raw UP/DOWN status for an entity, or None if unknown."""
+        key = entity.strip().upper()
+        if self.status_error or not key:
+            return None
+        row = next((r for r in self.status_rows if r.entity == key), None)
+        return row.status if row else None
+
+    def known_entities(self, limit: int = 20) -> list[str]:
+        """Return a sorted sample of known entity codes."""
+        return sorted({r.entity for r in self.status_rows})[:limit]
+
+    def has_ticket(self, entity: str) -> bool:
+        """True when the entity has at least one MTP ticket row."""
+        key = entity.strip().upper()
+        return any(r.entity == key for r in self.ticket_rows)
 
     def ticket_snapshot(self, top_n: int = 5) -> str:
         if self.ticket_error:

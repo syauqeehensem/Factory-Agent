@@ -1,16 +1,16 @@
-"""Build the stateful, cyclic multi-agent graph.
+"""Build the status-driven Equipment Performance Sustaining graph.
 
-This is the heart of the kit. The **Floor Supervisor** is a router node: it reads
-the conversation so far and decides which specialist should act next, or that the
-job is done. Each specialist node runs its ReAct agent, appends a summary to the
-shared messages, and routes **back to the supervisor** — that loop is the cycle:
+Flow (matches the design diagram):
 
-    START → supervisor ─(conditional)→ agent_technician ─→ supervisor
-                       └───────────────→ agent_yield ─────────→ supervisor
-                       └──"FINISH"──────────────────────────────→ END
+    START → status_check ─(DOWN)→ technician ─→ escalation ─→ END
+                         ├(UP)───→ yield ──────→ escalation ─→ END
+                         └(not found)─────────────────────────→ END
 
-The supervisor uses *structured output* so its routing choice is a typed value,
-not free text we have to parse — robust and easy to extend with more agents.
+``status_check`` is a deterministic router: it pulls the entity code from the
+user's message, looks up its UP/DOWN status in ``data/status.csv``, and routes
+to Agent Technician (excursion management) or Agent Yield (continue sustaining).
+Both specialists hand off to a shared Escalation step that opens a ticket when
+one is required.
 """
 
 from __future__ import annotations
@@ -23,105 +23,77 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     __package__ = "factory_agent"
 
+import re
 from typing import Any
 
 from langchain_core.messages import AIMessage
 from langgraph.graph import END, START, StateGraph
 
-from .agents import (
-    build_technician_agent,
-    build_yield_agent,
-)
+from .agents import build_escalation_agent, build_technician_agent, build_yield_agent
 from .llm import build_chat_model
+from .project_data import PROJECT_DATA
 from .state import FactoryState
 
-# The agents the supervisor can delegate to (plus the FINISH sentinel).
-WORKERS = ["agent_technician", "agent_yield"]
-_ROUTE_OPTIONS = WORKERS + ["FINISH"]
-
-TECH_KEYWORDS = {
-    "status",
-    "ticket",
-    "down",
-    "up",
-    "entity",
-    "tsx",
-    "tcb",
-    "manual",
-    "technician",
-    "troubleshoot",
-    "fault",
-    "error",
-    "vision",
-}
-
-YIELD_KEYWORDS = {
-    "yield",
-    "lot",
-    "baseline",
-    "hotspot",
-    "trend",
-    "scrap",
-    "loss",
-    "codeqty",
-    "oldqty",
-    "prodgroup",
-}
+# Entity codes look like TCB706 / TSX509 (2-4 letters + 2-4 digits).
+_ENTITY_RE = re.compile(r"[A-Za-z]{2,4}\d{2,4}")
 
 
-def _contains_any(text: str, words: set[str]) -> bool:
-    lowered = text.lower()
-    return any(w in lowered for w in words)
+def _extract_entity(text: str) -> str:
+    match = _ENTITY_RE.search(text or "")
+    return match.group(0).upper() if match else ""
 
 
-def _supervisor_node():
-    """Create a fast deterministic supervisor to avoid routing loops."""
+def _status_check_node():
+    """Deterministic 'Tools status check': entity → UP/DOWN → specialist."""
 
-    def supervisor(state: FactoryState) -> dict:
-        messages = state["messages"]
+    def status_check(state: FactoryState) -> dict:
         latest_user = ""
-        latest_user_idx = -1
-        for idx in range(len(messages) - 1, -1, -1):
-            msg = messages[idx]
+        for msg in reversed(state["messages"]):
             if getattr(msg, "type", "") == "human":
-                latest_user_idx = idx
                 latest_user = str(getattr(msg, "content", ""))
                 break
 
-        turn_messages = messages[latest_user_idx + 1 :] if latest_user_idx >= 0 else []
+        entity = _extract_entity(latest_user)
+        if not entity:
+            return {
+                "next": "FINISH",
+                "messages": [
+                    AIMessage(
+                        content="Please enter a tool/entity code, e.g. TCB706 or TSX509.",
+                        name="status_check",
+                    )
+                ],
+            }
 
-        answered_by = {
-            getattr(msg, "name", "")
-            for msg in turn_messages
-            if getattr(msg, "type", "") == "ai"
-        }
+        status = PROJECT_DATA.entity_status_value(entity)
+        if status is None:
+            known = ", ".join(PROJECT_DATA.known_entities())
+            return {
+                "next": "FINISH",
+                "entity": entity,
+                "messages": [
+                    AIMessage(
+                        content=(
+                            f"I couldn't find {entity} in the status data. "
+                            f"Known entities include: {known}."
+                        ),
+                        name="status_check",
+                    )
+                ],
+            }
 
-        wants_tech = _contains_any(latest_user, TECH_KEYWORDS)
-        wants_yield = _contains_any(latest_user, YIELD_KEYWORDS)
+        # UP → continue sustaining (yield); DOWN/other → excursion management (technician).
+        route = "yield" if status == "UP" else "technician"
+        return {"next": route, "entity": entity, "status": status}
 
-        nxt = "FINISH"
-        reason = "No more specialist actions needed."
-
-        if "agent_technician" not in answered_by and (wants_tech or not wants_yield):
-            nxt = "agent_technician"
-            reason = "Handle line status/tickets/manual troubleshooting first."
-        elif "agent_yield" not in answered_by and wants_yield:
-            nxt = "agent_yield"
-            reason = "Add yield analysis for trend and hotspot context."
-
-        note = f"[Floor Supervisor] → {nxt}: {reason}"
-        return {"next": nxt, "messages": [AIMessage(content=note, name="floor_supervisor")]}
-
-    return supervisor
+    return status_check
 
 
 def _worker_node(agent, name: str):
-    """Wrap a ReAct agent as a graph node that reports back to the supervisor."""
+    """Wrap a ReAct agent as a graph node that reports its final answer."""
 
     def worker(state: FactoryState) -> dict:
         result = agent.invoke({"messages": state["messages"]})
-        # Surface only the agent's final answer on the shared scratchpad; its
-        # intermediate tool calls are captured in the audit log.
         final = result["messages"][-1]
         return {"messages": [AIMessage(content=final.content, name=name)]}
 
@@ -129,7 +101,7 @@ def _worker_node(agent, name: str):
 
 
 def build_graph(model=None, checkpointer: Any | None = None):
-    """Compile and return the runnable multi-agent graph.
+    """Compile and return the runnable status-driven graph.
 
     Pass a ``model`` to inject your own (tests pass a dummy-key ChatOpenAI so the
     graph compiles offline); otherwise one is built from your settings. Optionally
@@ -138,22 +110,19 @@ def build_graph(model=None, checkpointer: Any | None = None):
     model = model or build_chat_model()
 
     builder = StateGraph(FactoryState)
-    builder.add_node("supervisor", _supervisor_node())
-    builder.add_node("agent_technician", _worker_node(build_technician_agent(model), "agent_technician"))
-    builder.add_node("agent_yield", _worker_node(build_yield_agent(model), "agent_yield"))
+    builder.add_node("status_check", _status_check_node())
+    builder.add_node("technician", _worker_node(build_technician_agent(model), "technician"))
+    builder.add_node("yield", _worker_node(build_yield_agent(model), "yield"))
+    builder.add_node("escalation", _worker_node(build_escalation_agent(model), "escalation"))
 
-    builder.add_edge(START, "supervisor")
-    # Every worker hands control back to the supervisor — this forms the cycle.
-    for worker in WORKERS:
-        builder.add_edge(worker, "supervisor")
-    # The supervisor's typed decision selects the next node (or ends the run).
+    builder.add_edge(START, "status_check")
     builder.add_conditional_edges(
-        "supervisor",
+        "status_check",
         lambda state: state["next"],
-        {
-            "agent_technician": "agent_technician",
-            "agent_yield": "agent_yield",
-            "FINISH": END,
-        },
+        {"technician": "technician", "yield": "yield", "FINISH": END},
     )
+    # Both specialists hand off to the shared escalation/action step.
+    builder.add_edge("technician", "escalation")
+    builder.add_edge("yield", "escalation")
+    builder.add_edge("escalation", END)
     return builder.compile(checkpointer=checkpointer)

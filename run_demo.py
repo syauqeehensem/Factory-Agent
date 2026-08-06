@@ -27,10 +27,7 @@ try:
 except (AttributeError, ValueError):  # pragma: no cover
     pass
 
-DEFAULT_SCENARIO = (
-    "Which entities are DOWN now, what ticket errors are most common, and which "
-    "yield hotspots should we watch today?"
-)
+DEFAULT_SCENARIO = "TCB706"
 
 
 def _print_project_data_status() -> None:
@@ -55,7 +52,7 @@ def _print_graph_structure() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="TCB Chatbot — two-agent demo")
-    parser.add_argument("--ask", default=DEFAULT_SCENARIO, help="The situation to hand the team")
+    parser.add_argument("--ask", default=DEFAULT_SCENARIO, help="An entity code to review (e.g. TCB706)")
     parser.add_argument("--status", action="store_true", help="Show Project Data status and exit")
     parser.add_argument("--graph", action="store_true", help="Print the graph structure and exit")
     args = parser.parse_args()
@@ -72,7 +69,7 @@ def main() -> int:
     MANUAL_INDEX.reload()
 
     print("=" * 70)
-    print("  TCB Chatbot — two-agent Project Data demo")
+    print("  TCB Chatbot — Equipment Performance Sustaining demo")
     print("=" * 70)
     _print_project_data_status()
     print(f"\nMode: {'LLM (' + settings.chat_model + ')' if settings.llm_enabled else 'NO KEY'}"
