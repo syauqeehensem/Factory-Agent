@@ -1,0 +1,6 @@
+<svg width="460" height="120" viewBox="0 0 460 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Intel Foundry logo">
+  <rect width="460" height="120" fill="#ffffff"/>
+  <rect x="28" y="24" width="10" height="10" fill="#26b8ea"/>
+  <text x="28" y="88" font-family="Segoe UI, Arial, sans-serif" font-size="72" font-weight="700" fill="#0d4ca3" letter-spacing="-1">intel</text>
+  <text x="188" y="88" font-family="Segoe UI, Arial, sans-serif" font-size="72" font-weight="400" fill="#26b8ea" letter-spacing="-1">foundry</text>
+</svg>

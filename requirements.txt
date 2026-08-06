@@ -1,0 +1,18 @@
+# =============================================================================
+# Factory Agent — dependencies
+# =============================================================================
+# This kit is built ON LangGraph, so (unlike the RAG kits) these are required to
+# run the agents. They are all pure-Python wheels and install quickly.
+
+langgraph>=0.2.0           # the stateful multi-agent graph framework
+langchain-core>=0.3.0      # messages, tools (@tool)
+langchain-openai>=0.2.0    # ChatOpenAI chat model
+openai>=1.30.0             # OpenAI client (pulled in by langchain-openai)
+streamlit>=1.37.0          # popup/web chatbot UI
+
+# --- Tests (optional) --------------------------------------------------------
+pytest>=8.0.0
+
+# Tip: a virtual environment keeps these isolated:
+#   python -m venv .venv && .venv\Scripts\activate   (Windows)
+#   pip install -r requirements.txt
