@@ -1,113 +1,101 @@
-﻿# TCB Chatbot (Factory Agent)
+﻿# Equipment Performance Sustaining Chatbot (TCB Factory Agent)
 
-Entity-first manufacturing support chatbot with deterministic routing and local-data RAG.
+This document is written for both non-coders and developers.
 
-## Core flow
+## What this app does (plain language)
 
-- `status_check` extracts an entity code (`TCB706`, `TSX509`, ...)
-- DOWN routes to `Agent Technician`
-- UP routes to `Agent Yield`
-- both route to shared `Escalation`
+This app is a factory support chatbot.
+It helps users quickly answer questions like:
 
-## Local data scope
+- Which tools are down right now?
+- Which entity has low yield?
+- Should this entity be escalated?
 
-The chatbot uses only files under `data/`:
+The app reads local project data files and gives structured answers.
+It can also keep short conversation memory so follow-up questions make sense.
+
+## Who this is for
+
+- Operations users who need status and escalation answers
+- Supervisors who want quick summary checks
+- Project team members demonstrating a working AI prototype
+
+## What data it uses
+
+The chatbot reads only local files in the `data/` folder:
 
 - `data/status.csv`
 - `data/mtp.csv`
 - `data/yield.csv`
-- `data/*.pdf`, `data/*.xlsx`, `data/*.txt`, `data/*.md` for manuals
+- `data/*.pdf`, `data/*.xlsx`, `data/*.txt`, `data/*.md` (manuals and references)
 
-No external factory system writes are performed. Ticket creation is simulated in memory.
+No external factory system updates are performed.
+Ticket creation is simulated inside the app memory.
 
-## Smoothness features
+## How the chatbot answers questions
 
-- Base style (`/style base`) is deterministic and does not wait on model latency.
-- Natural style (`/style natural`) has a soft UI timeout and falls back to local data.
-- Runtime profiles (`/profile fast`, `/profile rich`) let you switch between
-	speed-first and richer model-first behavior in one command.
-- Agent trace visibility can be toggled live (`/trace on|off|toggle`).
-- Session response cache speeds repeated prompts.
-- RAG and manual search caches reduce repeated retrieval cost.
-- Quick action buttons in UI for common flows, profile switching, and trace toggling.
-- Runtime commands for status and reload.
+```mermaid
+flowchart TD
+	A[User asks a question] --> B{Entity code found?}
+	B -- Yes --> C[Run entity checks: status, yield, escalation]
+	B -- No --> D{Broad intent question?}
+	D -- Yes --> E[Answer directly from local data]
+	D -- No --> F[Try model-assisted response]
+	F --> G{Model slow or unavailable?}
+	G -- Yes --> H[Use deterministic local fallback]
+	G -- No --> I[Return model-assisted answer]
+```
 
-## Quick start
+## Quick start for non-coders
+
+1. Open this project folder in VS Code.
+2. Open Terminal in VS Code.
+3. Run the commands below one by one.
 
 ```bash
 pip install -r requirements.txt
 copy .env.example .env
-# add OPENAI_API_KEY in .env
+```
 
+4. Open `.env` and add your API key value for `OPENAI_API_KEY`.
+5. Start the app:
+
+```bash
 python -m streamlit run chat_ui.py
 ```
 
-## Slash commands (UI)
+6. Open the shown local URL in your browser (usually `http://localhost:8501`).
 
-- `/style base`
-- `/style natural`
-- `/profile fast`
-- `/profile rich`
-- `/trace on|off|toggle`
-- `/status`
-- `/rag`
-- `/reload`
-- `/help`
+## Example questions you can try
 
-## Optional commands
+- `what tools is down`
+- `which entity has the lowest yield`
+- `tell me about TCB706`
+- `should TCB706 be escalated`
+- `what tools are underperforming`
 
-```bash
-python cli.py
-python run_demo.py --status
-python run_demo.py --graph
-python -m pytest tests/test_smoke.py -q
-python tests/eval_reasoning.py --count 100
-python tests/eval_reasoning.py --count 100 --style natural --attempt-live
-```
+## Commands inside the app
 
-## Reasoning evaluation
+Type these in the chat box:
 
-Use `tests/eval_reasoning.py` to benchmark reasoning quality over batch prompts.
+- `/help` - show available commands
+- `/status` - show runtime and data health
+- `/rag` - show RAG/index status
+- `/reload` - reload local data
+- `/reset` - clear current conversation
 
-- Builds up to 100 prompts from known entities plus a small unknown-entity slice.
-- Scores route accuracy, escalation accuracy, grounding coverage, latency, and fallback rate.
-- Writes report artifacts to `tests/reports/` as JSON + Markdown.
+## What has been delivered
 
-Example:
-
-```bash
-python tests/eval_reasoning.py --count 100 --style natural --attempt-live --out-prefix weekly
-```
-
-## Important environment variables
-
-- `OPENAI_API_KEY`
-- `CHAT_MODEL`
-- `LLM_TIMEOUT_SECONDS`
-- `UI_SOFT_TIMEOUT_SECONDS`
-- `UI_RESPONSE_CACHE_SIZE`
-- `RAG_QUERY_CACHE_SIZE`
-- `MANUAL_SEARCH_CACHE_SIZE`
-- `ENTITY_CONTEXT_CACHE_SIZE`
-- `STATUS_CSV_PATH`
-- `MTP_CSV_PATH`
-- `YIELD_CSV_PATH`
-- `TECHNICIAN_DOCS_DIR`
+- Working Streamlit chatbot prototype
+- Company-branded GUI customization
+- Local-data-based status, yield, and escalation logic
+- Fallback behavior when model is unavailable
+- Conversation memory for better follow-up handling
+- Public GitHub repository with source code
 
 ## Privacy note
 
-`data/` is git-ignored by default and should remain local when it contains confidential production information.
-
-## Key files
-
-- `factory_agent/graph.py` - deterministic status router + specialist handoffs
-- `factory_agent/agents.py` - specialist prompts (base and natural)
-- `factory_agent/tools.py` - integrated read/action tools and entity context
-- `factory_agent/knowledge_rag.py` - unified CSV/manual retrieval and query cache
-- `factory_agent/manual_data.py` - manual indexing and search cache
-- `factory_agent/project_data.py` - status and ticket CSV adapters
-- `factory_agent/yield_data.py` - per-entity yield checks
-- `chat_ui.py` - Streamlit frontend with soft-timeout fallback and quick actions
+`data/` is git-ignored by default and should stay local when it contains confidential production information.
 
 ## Team delegation (Pasted Image 1 requirements)
 
@@ -141,3 +129,56 @@ flowchart TD
 | RAG with local factory knowledge/data | Nazari, Yong Amirah |
 | Prompt design, fallback behavior, natural intent handling | Tan, Siew Heng |
 | Python quality checks, evaluation, and runtime profiling | Mohamad Yusoff, Nur Hamizah |
+
+## Developer appendix
+
+### Optional commands
+
+```bash
+python cli.py
+python run_demo.py --status
+python run_demo.py --graph
+python -m pytest tests/test_smoke.py -q
+python tests/eval_reasoning.py --count 100
+python tests/eval_reasoning.py --count 100 --style natural --attempt-live
+```
+
+### Reasoning evaluation
+
+Use `tests/eval_reasoning.py` to benchmark reasoning quality over batch prompts.
+
+- Builds up to 100 prompts from known entities plus a small unknown-entity slice.
+- Scores route accuracy, escalation accuracy, grounding coverage, latency, and fallback rate.
+- Writes report artifacts to `tests/reports/` as JSON and Markdown.
+
+Example:
+
+```bash
+python tests/eval_reasoning.py --count 100 --style natural --attempt-live --out-prefix weekly
+```
+
+### Important environment variables
+
+- `OPENAI_API_KEY`
+- `CHAT_MODEL`
+- `LLM_TIMEOUT_SECONDS`
+- `UI_SOFT_TIMEOUT_SECONDS`
+- `UI_RESPONSE_CACHE_SIZE`
+- `RAG_QUERY_CACHE_SIZE`
+- `MANUAL_SEARCH_CACHE_SIZE`
+- `ENTITY_CONTEXT_CACHE_SIZE`
+- `STATUS_CSV_PATH`
+- `MTP_CSV_PATH`
+- `YIELD_CSV_PATH`
+- `TECHNICIAN_DOCS_DIR`
+
+### Key files
+
+- `factory_agent/graph.py` - status routing and specialist handoffs
+- `factory_agent/agents.py` - specialist prompts
+- `factory_agent/tools.py` - integrated read/action tools and entity context
+- `factory_agent/knowledge_rag.py` - CSV/manual retrieval and query cache
+- `factory_agent/manual_data.py` - manual indexing and search cache
+- `factory_agent/project_data.py` - status and ticket CSV adapters
+- `factory_agent/yield_data.py` - per-entity yield checks
+- `chat_ui.py` - Streamlit frontend
