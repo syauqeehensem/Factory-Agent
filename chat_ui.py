@@ -116,6 +116,8 @@ def _resolve_entity_with_memory(question: str) -> str:
     direct = _extract_entity(question)
     if direct:
         return direct
+    if not _should_reuse_last_entity(question):
+        return ""
     remembered = str(st.session_state.get("last_entity", "")).strip().upper()
     return remembered
 
@@ -124,6 +126,8 @@ def _cache_prompt_with_context(prompt: str) -> str:
     """Make cache keys context-aware when a prompt relies on remembered entity."""
     direct = _extract_entity(prompt)
     if direct:
+        return prompt
+    if not _should_reuse_last_entity(prompt):
         return prompt
     remembered = str(st.session_state.get("last_entity", "")).strip().upper()
     return f"{prompt} [entity:{remembered}]" if remembered else prompt
@@ -396,12 +400,42 @@ def _local_intent_reply(question: str) -> str | None:
         "down-tool",
         "down tool",
     ]
+    highest_yield_markers = [
+        "highest yield",
+        "best yield",
+        "top yield",
+        "max yield",
+    ]
+    lowest_yield_markers = [
+        "lowest yield",
+        "worst yield",
+        "min yield",
+        "minimum yield",
+    ]
+    underperforming_markers = [
+        "underperform",
+        "low yield",
+        "below threshold",
+        "below target",
+        "poor yield",
+        "weak yield",
+    ]
 
     asks_down = any(marker in q for marker in down_markers)
     asks_up = any(marker in q for marker in up_markers)
     asks_escalation = any(marker in q for marker in escalation_markers)
+    asks_highest_yield = any(marker in q for marker in highest_yield_markers)
+    asks_lowest_yield = any(marker in q for marker in lowest_yield_markers)
+    asks_underperforming = any(marker in q for marker in underperforming_markers)
 
-    if not (asks_down or asks_up or asks_escalation):
+    if not (
+        asks_down
+        or asks_up
+        or asks_escalation
+        or asks_highest_yield
+        or asks_lowest_yield
+        or asks_underperforming
+    ):
         return None
 
     status_rows = PROJECT_DATA.status_rows
@@ -410,6 +444,11 @@ def _local_intent_reply(question: str) -> str | None:
 
     down_entities = sorted({r.entity for r in status_rows if r.status == "DOWN"})
     up_entities = sorted({r.entity for r in status_rows if r.status == "UP"})
+    goal = float(settings.yield_threshold)
+    yield_pairs = [
+        (row.entity, YIELD_DATASET.entity_yield(row.entity)) for row in status_rows
+    ]
+    yield_pairs = [(entity, yv) for entity, yv in yield_pairs if yv is not None]
 
     sections: list[str] = ["Here is the latest local-data snapshot:"]
 
@@ -430,7 +469,6 @@ def _local_intent_reply(question: str) -> str | None:
             sections.append("● UP entities:\n\nNone found in the current status dataset.")
 
     if asks_escalation:
-        goal = float(settings.yield_threshold)
         escalation_lines: list[str] = []
         for row in sorted(status_rows, key=lambda x: x.entity):
             reasons: list[str] = []
@@ -456,7 +494,93 @@ def _local_intent_reply(question: str) -> str | None:
                 "None at the moment (no DOWN status and no yield below threshold)."
             )
 
+    if asks_highest_yield:
+        if yield_pairs:
+            top_entity, top_yield = max(yield_pairs, key=lambda p: p[1])
+            sections.append(
+                f"● Highest yield entity:\n\n{top_entity} at {top_yield:.1f}%"
+            )
+        else:
+            sections.append("● Highest yield entity:\n\nYield data is unavailable right now.")
+
+    if asks_lowest_yield:
+        if yield_pairs:
+            bottom_entity, bottom_yield = min(yield_pairs, key=lambda p: p[1])
+            sections.append(
+                f"● Lowest yield entity:\n\n{bottom_entity} at {bottom_yield:.1f}%"
+            )
+        else:
+            sections.append("● Lowest yield entity:\n\nYield data is unavailable right now.")
+
+    if asks_underperforming:
+        underperformers = sorted(
+            [(entity, yv) for entity, yv in yield_pairs if yv < goal],
+            key=lambda p: p[1],
+        )
+        if underperformers:
+            lines = [f"- {entity}: {yv:.1f}% (below {goal:.0f}%)" for entity, yv in underperformers[:14]]
+            if len(underperformers) > 14:
+                lines.append(f"- ... (+{len(underperformers) - 14} more)")
+            sections.append("● Underperforming entities:\n\n" + "\n".join(lines))
+        else:
+            sections.append(
+                f"● Underperforming entities:\n\nNone right now (all yields are at or above {goal:.0f}%)."
+            )
+
     return "\n\n".join(sections)
+
+
+def _should_reuse_last_entity(question: str) -> bool:
+    """Only reuse remembered entity for true follow-up phrasing."""
+    q = _normalize_prompt(question)
+    if not q:
+        return False
+
+    # Global/multi-entity intents should not be forced to the remembered entity.
+    global_markers = [
+        "which entity",
+        "which entities",
+        "list",
+        "highest yield",
+        "best yield",
+        "top yield",
+        "max yield",
+        "lowest yield",
+        "worst yield",
+        "min yield",
+        "minimum yield",
+        "underperform",
+        "below threshold",
+        "below target",
+        "what is down",
+        "what are down",
+        "what is up",
+        "what are up",
+    ]
+    if any(marker in q for marker in global_markers):
+        return False
+
+    followup_markers = [
+        "what about it",
+        "how about it",
+        "what about its",
+        "how about its",
+        "about it",
+        "about its",
+        "should it",
+        "is it",
+        "does it",
+        "can it",
+        "that entity",
+        "this entity",
+        "that tool",
+        "this tool",
+        "that one",
+        "this one",
+        "same entity",
+        "same tool",
+    ]
+    return any(marker in q for marker in followup_markers)
 
 
 def _deterministic_entity_reply(question: str, reason: str = "", manual_top_k: int = 2) -> str:
@@ -743,7 +867,7 @@ def _run_turn(question: str) -> dict:
     resolved_question = question
     if not _extract_entity(question):
         remembered = str(st.session_state.get("last_entity", "")).strip().upper()
-        if remembered:
+        if remembered and _should_reuse_last_entity(question):
             resolved_question = f"{question}\n\nContext: the current entity is {remembered}."
 
     manual_top_k = max(1, min(int(st.session_state.get("manual_top_k", 2)), 4))
