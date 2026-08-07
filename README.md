@@ -38,15 +38,15 @@ Ticket creation is simulated inside the app memory.
 flowchart TD
   start([__start__]) --> check_status[check_status]
 
-  %% Parallel assessment
+  %% Two assessments (can run in parallel; no join required)
   check_status --> technician_agent[technician_agent]
   check_status --> quality_agent[quality_agent]
 
+  %% Technician assessment: MTP ticket path
   technician_agent --> read_ticket["read_ticket (MTP)"]
-  quality_agent --> yield_check["yield_check (yield data)"]
-
-  read_ticket --> retrieve_cases[retrieve_cases]
-  yield_check --> retrieve_cases
+  read_ticket --> ticket_ok{ticket available?}
+  ticket_ok -- Yes --> retrieve_cases[retrieve_cases]
+  ticket_ok -- No --> create_ticket["create MTP ticket"]
 
   retrieve_cases --> recommend_steps[recommend_steps]
   recommend_steps --> technician_update[technician_update]
@@ -59,7 +59,17 @@ flowchart TD
   technician_update -.-> learn[learn]
   technician_update -.-> reanalyze
   learn --> store[store]
+
+  %% Quality assessment: yield path
+  quality_agent --> yield_check["yield_check (yield data)"]
+  yield_check --> yield_loss{yield loss?}
+  yield_loss -- Yes --> create_ticket
+  yield_loss -- No --> no_action["no action"]
+
+  %% End states
   store --> end_node([__end__])
+  create_ticket --> end_node
+  no_action --> end_node
 ```
 
 ## Quick start for non-coders
