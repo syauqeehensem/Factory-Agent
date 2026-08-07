@@ -88,44 +88,6 @@ python -m streamlit run chat_ui.py
 
 6. Open the shown local URL in your browser (usually `http://localhost:8501`).
 
-Alternative web UI (HTML, CSS, JavaScript + Python backend):
-
-```bash
-python chat_web_api.py
-```
-
-Then open:
-
-- `http://127.0.0.1:8502`
-
-Alternative desktop app (no Streamlit):
-
-```bash
-python chat_desktop_alt.py
-```
-
-This opens a desktop chatbot window using Tkinter.
-
-## Add PDF knowledge so answers are grounded with citations
-
-Use your course PDF (or any internal PDF playbook) to build a local knowledge index:
-
-```bash
-python tools/build_pdf_knowledge.py --pdf "..\\..\\Advanced LLM for the Manufacturing Industry.pdf"
-```
-
-This creates:
-
-- `knowledge_layer/course_knowledge.jsonl`
-
-Then run `/reload` in chat (or restart app). The chatbot can now answer broad
-questions using indexed PDF chunks and show citations.
-
-Useful commands:
-
-- `/knowledge` - shows PDF knowledge index status
-- `/ask <question>` - returns a concise grounded answer with citations
-
 ## Example questions you can try
 
 - `what tools is down`
@@ -133,18 +95,6 @@ Useful commands:
 - `tell me about TCB706`
 - `should TCB706 be escalated`
 - `what tools are underperforming`
-
-## Commands inside the app
-
-Type these in the chat box:
-
-- `/help` - show available commands
-- `/status` - show runtime and data health
-- `/rag` - show RAG/index status
-- `/knowledge` - show PDF knowledge index status
-- `/ask <question>` - grounded answer with citations
-- `/reload` - reload local data
-- `/reset` - clear current conversation
 
 ## What has been delivered
 
