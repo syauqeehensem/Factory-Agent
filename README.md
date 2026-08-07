@@ -35,37 +35,31 @@ Ticket creation is simulated inside the app memory.
 ## How the chatbot answers questions
 
 ```mermaid
-%%{init: {
-  'theme': 'base',
-  'themeVariables': {
-    'textColor': '#111111',
-    'primaryTextColor': '#111111',
-    'lineColor': '#333333',
-    'primaryBorderColor': '#333333'
-  }
-}}%%
-graph TD;
-        __start__([<p>__start__</p>]):::first
-        read_ticket(read_ticket)
-        retrieve_cases(retrieve_cases)
-        recommend_steps(recommend_steps)
-        technician_update(technician_update)
-        reanalyze(reanalyze)
-        learn(learn)
-        store(store)
-        __end__([<p>__end__</p>]):::last
-        __start__ --> read_ticket;
-        learn --> store;
-        read_ticket --> retrieve_cases;
-        reanalyze --> recommend_steps;
-        recommend_steps --> technician_update;
-        retrieve_cases --> recommend_steps;
-        technician_update -.-> learn;
-        technician_update -.-> reanalyze;
-        store --> __end__;
-        classDef default fill:#f2f0ff,stroke:#333,stroke-width:1px,color:#111,line-height:1.2
-        classDef first fill-opacity:0
-        classDef last fill:#bfb6fc
+flowchart TD
+	start([__start__]) --> check_status[check_status]
+
+	%% Parallel assessment
+	check_status --> technician_agent[technician_agent]
+	check_status --> quality_agent[quality_agent]
+
+	technician_agent --> read_ticket[read_ticket (MTP)]
+	quality_agent --> yield_check[yield_check (yield data)]
+
+	read_ticket --> retrieve_cases[retrieve_cases]
+	yield_check --> retrieve_cases
+
+	retrieve_cases --> recommend_steps[recommend_steps]
+	recommend_steps --> technician_update[technician_update]
+
+	%% Optional iteration
+	recommend_steps --> reanalyze[reanalyze]
+	reanalyze --> recommend_steps
+
+	%% Technician update either learns/stores or reanalyzes
+	technician_update -.-> learn[learn]
+	technician_update -.-> reanalyze
+	learn --> store[store]
+	store --> end([__end__])
 ```
 
 ## Quick start for non-coders
