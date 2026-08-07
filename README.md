@@ -35,15 +35,37 @@ Ticket creation is simulated inside the app memory.
 ## How the chatbot answers questions
 
 ```mermaid
-flowchart TD
-	A[User asks a question] --> B{Entity code found?}
-	B -- Yes --> C[Run entity checks: status, yield, escalation]
-	B -- No --> D{Broad intent question?}
-	D -- Yes --> E[Answer directly from local data]
-	D -- No --> F[Try model-assisted response]
-	F --> G{Model slow or unavailable?}
-	G -- Yes --> H[Use deterministic local fallback]
-	G -- No --> I[Return model-assisted answer]
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'textColor': '#111111',
+    'primaryTextColor': '#111111',
+    'lineColor': '#333333',
+    'primaryBorderColor': '#333333'
+  }
+}}%%
+graph TD;
+        __start__([<p>__start__</p>]):::first
+        read_ticket(read_ticket)
+        retrieve_cases(retrieve_cases)
+        recommend_steps(recommend_steps)
+        technician_update(technician_update)
+        reanalyze(reanalyze)
+        learn(learn)
+        store(store)
+        __end__([<p>__end__</p>]):::last
+        __start__ --> read_ticket;
+        learn --> store;
+        read_ticket --> retrieve_cases;
+        reanalyze --> recommend_steps;
+        recommend_steps --> technician_update;
+        retrieve_cases --> recommend_steps;
+        technician_update -.-> learn;
+        technician_update -.-> reanalyze;
+        store --> __end__;
+        classDef default fill:#f2f0ff,stroke:#333,stroke-width:1px,color:#111,line-height:1.2
+        classDef first fill-opacity:0
+        classDef last fill:#bfb6fc
 ```
 
 ## Quick start for non-coders
