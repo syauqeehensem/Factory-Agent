@@ -36,30 +36,30 @@ Ticket creation is simulated inside the app memory.
 
 ```mermaid
 flowchart TD
-	start([__start__]) --> check_status[check_status]
+  start([__start__]) --> check_status[check_status]
 
-	%% Parallel assessment
-	check_status --> technician_agent[technician_agent]
-	check_status --> quality_agent[quality_agent]
+  %% Parallel assessment
+  check_status --> technician_agent[technician_agent]
+  check_status --> quality_agent[quality_agent]
 
-	technician_agent --> read_ticket[read_ticket (MTP)]
-	quality_agent --> yield_check[yield_check (yield data)]
+  technician_agent --> read_ticket["read_ticket (MTP)"]
+  quality_agent --> yield_check["yield_check (yield data)"]
 
-	read_ticket --> retrieve_cases[retrieve_cases]
-	yield_check --> retrieve_cases
+  read_ticket --> retrieve_cases[retrieve_cases]
+  yield_check --> retrieve_cases
 
-	retrieve_cases --> recommend_steps[recommend_steps]
-	recommend_steps --> technician_update[technician_update]
+  retrieve_cases --> recommend_steps[recommend_steps]
+  recommend_steps --> technician_update[technician_update]
 
-	%% Optional iteration
-	recommend_steps --> reanalyze[reanalyze]
-	reanalyze --> recommend_steps
+  %% Optional iteration
+  recommend_steps --> reanalyze[reanalyze]
+  reanalyze --> recommend_steps
 
-	%% Technician update either learns/stores or reanalyzes
-	technician_update -.-> learn[learn]
-	technician_update -.-> reanalyze
-	learn --> store[store]
-	store --> end([__end__])
+  %% Technician update either learns/stores or reanalyzes
+  technician_update -.-> learn[learn]
+  technician_update -.-> reanalyze
+  learn --> store[store]
+  store --> end_node([__end__])
 ```
 
 ## Quick start for non-coders
