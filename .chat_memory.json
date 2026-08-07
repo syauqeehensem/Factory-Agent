@@ -25,7 +25,111 @@
     {
       "role": "assistant",
       "content": "Here is the latest local-data snapshot:\n\n\u25cf Lowest yield entity:\n\nTCB706 at 34.2%"
+    },
+    {
+      "role": "user",
+      "content": "What entity has the highest yielf"
+    },
+    {
+      "role": "assistant",
+      "content": "Please enter a tool/entity code, e.g. TCB706 or TSX509."
+    },
+    {
+      "role": "user",
+      "content": "What entity has the highest yield"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf Highest yield entity:\n\nTCB003 at 100.0%"
+    },
+    {
+      "role": "user",
+      "content": "What tool has the lowest yield"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf Lowest yield entity:\n\nTCB706 at 34.2%"
+    },
+    {
+      "role": "user",
+      "content": "What tool is down"
+    },
+    {
+      "role": "assistant",
+      "content": "Please enter a tool/entity code, e.g. TCB706 or TSX509."
+    },
+    {
+      "role": "user",
+      "content": "What tool is down"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf DOWN entities (4):\n\nTCB702, TCB711, TSX509, TSX515\n\n\u25cf analysis:\n\n- DOWN ratio: 4/31 tools (12.9%).\n- Priority check order: TCB702 (100.0%), TCB711 (100.0%), TSX509 (100.0%).\n- Recommended action: dispatch technician checks and keep/open down-tool tickets until status returns UP."
+    },
+    {
+      "role": "user",
+      "content": "what tools is down"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf DOWN entities (4):\n\nTCB702, TCB711, TSX509, TSX515\n\n\u25cf analysis:\n\n- DOWN ratio: 4/31 tools (12.9%).\n- Priority check order: TCB702 (100.0%), TCB711 (100.0%), TSX509 (100.0%).\n- Recommended action: dispatch technician checks and keep/open down-tool tickets until status returns UP."
+    },
+    {
+      "role": "user",
+      "content": "what tools is down?"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf DOWN entities (4):\n\nTCB702, TCB711, TSX509, TSX515\n\n\u25cf analysis:\n\n- DOWN ratio: 4/31 tools (12.9%).\n- Priority check order: TCB702 (100.0%), TCB711 (100.0%), TSX509 (100.0%).\n- Recommended action: dispatch technician checks and keep/open down-tool tickets until status returns UP."
+    },
+    {
+      "role": "user",
+      "content": "What tools is up?"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf UP entities (27):\n\nTCB003, TCB005, TCB006, TCB703, TCB705, TCB706, TCB707, TCB708, TCB709, TCB710, TCB712, TCB713, TCB714, TSX101, TSX102, TSX103, TSX104, TSX501, ... (+9 more)"
+    },
+    {
+      "role": "user",
+      "content": "What tools need escalation?"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf Entities that should be escalated now:\n\n- TCB702: status is DOWN\n- TCB706: yield 34.2% below 50%\n- TCB711: status is DOWN\n- TSX509: status is DOWN\n- TSX515: status is DOWN"
+    },
+    {
+      "role": "user",
+      "content": "what tool is down?"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf DOWN entities (4):\n\nTCB702, TCB711, TSX509, TSX515\n\n\u25cf analysis:\n\n- DOWN ratio: 4/31 tools (12.9%).\n- Priority check order: TCB702 (100.0%), TCB711 (100.0%), TSX509 (100.0%).\n- Recommended action: dispatch technician checks and keep/open down-tool tickets until status returns UP."
+    },
+    {
+      "role": "user",
+      "content": "What tools is UP?"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf UP entities (27):\n\nTCB003, TCB005, TCB006, TCB703, TCB705, TCB706, TCB707, TCB708, TCB709, TCB710, TCB712, TCB713, TCB714, TSX101, TSX102, TSX103, TSX104, TSX501, ... (+9 more)"
+    },
+    {
+      "role": "user",
+      "content": "What tool need escalation?"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf Entities that should be escalated now:\n\n- TCB702: status is DOWN\n- TCB706: yield 34.2% below 50%\n- TCB711: status is DOWN\n- TSX509: status is DOWN\n- TSX515: status is DOWN"
+    },
+    {
+      "role": "user",
+      "content": "What tools doesn't need escalation?"
+    },
+    {
+      "role": "assistant",
+      "content": "Here is the latest local-data snapshot:\n\n\u25cf Entities that should be escalated now:\n\n- TCB702: status is DOWN\n- TCB706: yield 34.2% below 50%\n- TCB711: status is DOWN\n- TSX509: status is DOWN\n- TSX515: status is DOWN"
     }
   ],
-  "saved_at": 1786064923
+  "saved_at": 1786065189
 }

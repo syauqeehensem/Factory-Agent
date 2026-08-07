@@ -373,22 +373,36 @@ def _local_intent_reply(question: str) -> str | None:
     down_markers = [
         "which entity is down",
         "which entities are down",
+        "which tool is down",
+        "which tools are down",
         "entity down",
         "entities down",
+        "tool down",
+        "tools down",
         "currently down",
         "list down",
         "what is down",
         "what are down",
+        "what tool is down",
+        "what tools are down",
+        "what tools is down",
     ]
     up_markers = [
         "which entity is up",
         "which entities are up",
+        "which tool is up",
+        "which tools are up",
         "entity up",
         "entities up",
+        "tool up",
+        "tools up",
         "currently up",
         "list up",
         "what is up",
         "what are up",
+        "what tool is up",
+        "what tools are up",
+        "what tools is up",
     ]
     escalation_markers = [
         "escalat",
@@ -527,6 +541,62 @@ def _local_intent_reply(question: str) -> str | None:
                 f"● Underperforming entities:\n\nNone right now (all yields are at or above {goal:.0f}%)."
             )
 
+    if asks_down:
+        total_tools = len(status_rows)
+        down_count = len(down_entities)
+        if down_count:
+            down_ratio = (down_count / total_tools) * 100 if total_tools else 0.0
+            down_set = set(down_entities)
+            down_yields = sorted(
+                [(entity, yv) for entity, yv in yield_pairs if entity in down_set],
+                key=lambda p: p[1],
+            )
+            down_with_missing_yield = sorted(
+                [entity for entity in down_entities if entity not in {name for name, _ in down_yields}]
+            )
+
+            analysis_lines = [
+                f"DOWN ratio: {down_count}/{total_tools} tools ({down_ratio:.1f}%)."
+            ]
+
+            low_yield_down = [
+                f"{entity} ({yv:.1f}%)" for entity, yv in down_yields if yv < goal
+            ]
+            if low_yield_down:
+                analysis_lines.append(
+                    f"DOWN tools below {goal:.0f}% yield: {', '.join(low_yield_down[:6])}."
+                )
+
+            if down_yields:
+                priority = ", ".join(
+                    [f"{entity} ({yv:.1f}%)" for entity, yv in down_yields[:3]]
+                )
+                analysis_lines.append(f"Priority check order: {priority}.")
+            else:
+                analysis_lines.append(
+                    "Priority check order: all DOWN tools (yield values unavailable)."
+                )
+
+            if down_with_missing_yield:
+                analysis_lines.append(
+                    "Missing yield for DOWN tools: "
+                    f"{_list_preview(down_with_missing_yield, max_items=6)}."
+                )
+
+            analysis_lines.append(
+                "Recommended action: dispatch technician checks and keep/open down-tool tickets "
+                "until status returns UP."
+            )
+
+            sections.append(
+                "● analysis:\n\n" + "\n".join([f"- {line}" for line in analysis_lines])
+            )
+        else:
+            sections.append(
+                "● analysis:\n\n"
+                "- No tools are currently DOWN, so no immediate down-tool recovery action is needed."
+            )
+
     return "\n\n".join(sections)
 
 
@@ -540,6 +610,8 @@ def _should_reuse_last_entity(question: str) -> bool:
     global_markers = [
         "which entity",
         "which entities",
+        "which tool",
+        "which tools",
         "list",
         "highest yield",
         "best yield",
@@ -554,8 +626,14 @@ def _should_reuse_last_entity(question: str) -> bool:
         "below target",
         "what is down",
         "what are down",
+        "what tool is down",
+        "what tools are down",
+        "what tools is down",
         "what is up",
         "what are up",
+        "what tool is up",
+        "what tools are up",
+        "what tools is up",
     ]
     if any(marker in q for marker in global_markers):
         return False
