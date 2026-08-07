@@ -66,6 +66,25 @@ python -m streamlit run chat_ui.py
 
 6. Open the shown local URL in your browser (usually `http://localhost:8501`).
 
+## Optional performance boost: 100,000-question memory layer
+
+If you want broader natural question coverage, generate the question-memory file once:
+
+```bash
+python tools/generate_question_memory.py --count 100000 --seed 42
+```
+
+This creates:
+
+- `memory_layer/questions_100k.jsonl`
+
+Then restart the app (or run `/reload` in chat). The app will use this file as a
+question-memory layer for intent recognition.
+
+Useful command:
+
+- `/memory` - shows question-memory layer status
+
 ## Example questions you can try
 
 - `what tools is down`
@@ -96,39 +115,6 @@ Type these in the chat box:
 ## Privacy note
 
 `data/` is git-ignored by default and should stay local when it contains confidential production information.
-
-## Team delegation (Pasted Image 1 requirements)
-
-### Project delivery flow (from pasted image)
-
-```mermaid
-flowchart TD
-	A[Define project scope and role owners] --> B[Customize GUI and company logo]
-	B --> C[Build and stabilize working prototype]
-	C --> D[Prepare end-to-end demo script]
-	D --> E[Upload source code and related files to public GitHub]
-	E --> F[Complete README with run guide, delivered scope, and member contributions]
-	F --> G[Prepare presentation deck max 10 slides]
-	G --> H[Deliver 10-minute group presentation]
-```
-
-| Requirement | Owner | Expected output |
-|---|---|---|
-| 10-minute presentation, PowerPoint max 10 slides | Tan, Siew Heng | Final slide deck and speaking flow |
-| Source code and related files uploaded to public GitHub | Tung, Shi Wah | Public repository with working links |
-| Working prototype plus live demo | Hermanto, Ahmad Syauqee | Stable app run and demo script |
-| Customized GUI and company logo (starter GUI not used) | Nazari, Yong Amirah | Branded interface aligned to company identity |
-| README with run steps, delivered scope, and member contributions | Mohamad Yusoff, Nur Hamizah | Completed README delivery section |
-
-## Team delegation (top knowledge areas)
-
-| Task | Owner |
-|---|---|
-| Streamlit app development and UX flow | Hermanto, Ahmad Syauqee |
-| LangGraph workflow and multi-agent orchestration | Tung, Shi Wah |
-| RAG with local factory knowledge/data | Nazari, Yong Amirah |
-| Prompt design, fallback behavior, natural intent handling | Tan, Siew Heng |
-| Python quality checks, evaluation, and runtime profiling | Mohamad Yusoff, Nur Hamizah |
 
 ## Developer appendix
 
@@ -171,6 +157,9 @@ python tests/eval_reasoning.py --count 100 --style natural --attempt-live --out-
 - `MTP_CSV_PATH`
 - `YIELD_CSV_PATH`
 - `TECHNICIAN_DOCS_DIR`
+- `QUESTION_MEMORY_PATH`
+- `QUESTION_MEMORY_ENABLED`
+- `QUESTION_MEMORY_MAX_ITEMS`
 
 ### Key files
 
