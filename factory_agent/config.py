@@ -126,10 +126,12 @@ class Settings:
     )
 
     # --- UI branding -------------------------------------------------------
-    app_title: str = field(default_factory=lambda: os.getenv("APP_TITLE", "TCB Chatbot"))
+    app_title: str = field(
+        default_factory=lambda: os.getenv("APP_TITLE", "Equipment Performance Sustaining")
+    )
     foundry_logo_path: str = field(
         default_factory=lambda: os.getenv(
-            "FOUNDRY_LOGO_PATH", str(PROJECT_ROOT / "assets" / "foundry-logo.svg")
+            "FOUNDRY_LOGO_PATH", str(PROJECT_ROOT / "image (4).png")
         )
     )
 

@@ -8,6 +8,9 @@ data/
 # Pasted screenshots (may contain confidential data)
 image (*).png
 
+# Local persisted chat memory
+.chat_memory.json
+
 # Python
 __pycache__/
 *.py[cod]

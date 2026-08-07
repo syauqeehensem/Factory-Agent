@@ -7,6 +7,7 @@ Run:
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import subprocess
 import sys
 import threading
@@ -15,8 +16,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import streamlit as st
-from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import AIMessage, HumanMessage
 
 from factory_agent import build_graph
 from factory_agent.config import settings
@@ -26,83 +26,123 @@ from factory_agent.graph import _extract_entity
 from factory_agent.llm import LLMNotConfigured, build_chat_model
 from factory_agent.project_data import PROJECT_DATA
 from factory_agent.tickets import TICKET_STORE
-from factory_agent.tools import get_entity_full_context
 from factory_agent.yield_data import YIELD_DATASET
 
-CHECKPOINTER = MemorySaver()
-
-NODE_LABELS = {
-    "status_check": "Status check",
-    "technician": "Agent Technician",
-    "yield": "Agent Yield",
-    "escalation": "Escalation",
-    "fallback": "Fallback",
-}
-
-SAMPLE_DOWN_ENTITY = "TCB702"
-SAMPLE_UP_ENTITY = "TSX509"
+# Chat memory is rebuilt from persisted chat history each turn, so no in-RAM
+# checkpointer is required for continuity across app restarts.
+CHECKPOINTER = None
+CHAT_MEMORY_PATH = Path(__file__).resolve().parent / ".chat_memory.json"
 
 
-def _runtime_profile_presets() -> dict[str, dict[str, object]]:
-    """Return runtime profile presets for response smoothness tuning."""
-    fast_timeout = max(1.0, float(settings.ui_soft_timeout_seconds))
-    rich_timeout = max(14.0, fast_timeout + 8.0)
+def _persistable_chat_log() -> list[dict[str, str]]:
+    """Return a compact chat log safe to store on disk."""
+    stored: list[dict[str, str]] = []
+    for msg in st.session_state.get("chat_log", []):
+        role = str(msg.get("role", "")).strip().lower()
+        content = str(msg.get("content", "")).strip()
+        if role in {"user", "assistant"} and content:
+            stored.append({"role": role, "content": content})
+    return stored
+
+
+def _save_persistent_chat_state() -> None:
+    """Persist lightweight chat state to disk for restart continuity."""
+    payload = {
+        "thread_id": str(st.session_state.get("thread_id", "")),
+        "last_entity": str(st.session_state.get("last_entity", "")),
+        "chat_log": _persistable_chat_log(),
+        "saved_at": int(time.time()),
+    }
+    try:
+        CHAT_MEMORY_PATH.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001 - memory persistence should not break chat flow
+        return
+
+
+def _clear_persistent_chat_state() -> None:
+    """Delete persisted chat memory if it exists."""
+    try:
+        if CHAT_MEMORY_PATH.exists():
+            CHAT_MEMORY_PATH.unlink()
+    except Exception:  # noqa: BLE001 - best effort cleanup
+        return
+
+
+def _load_persistent_chat_state() -> dict:
+    """Load persisted chat memory from disk, returning a normalized payload."""
+    if not CHAT_MEMORY_PATH.exists():
+        return {}
+
+    try:
+        raw = json.loads(CHAT_MEMORY_PATH.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - corrupted memory file should be ignored
+        return {}
+
+    log: list[dict[str, str]] = []
+    for item in raw.get("chat_log", []) if isinstance(raw.get("chat_log"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "")).strip().lower()
+        content = str(item.get("content", "")).strip()
+        if role in {"user", "assistant"} and content:
+            log.append({"role": role, "content": content})
+
     return {
-        "fast": {
-            "soft_timeout_seconds": fast_timeout,
-            "manual_top_k": 2,
-            "show_agent_trace": False,
-        },
-        "rich": {
-            "soft_timeout_seconds": rich_timeout,
-            "manual_top_k": 3,
-            "show_agent_trace": True,
-        },
+        "thread_id": str(raw.get("thread_id", "")).strip(),
+        "last_entity": str(raw.get("last_entity", "")).strip().upper(),
+        "chat_log": log,
     }
 
 
-def _apply_runtime_profile(name: str, announce: bool = True) -> str:
-    """Apply a runtime profile to session-scoped responsiveness knobs."""
-    candidate = (name or "").strip().lower()
-    presets = _runtime_profile_presets()
-    if candidate not in presets:
-        return "Invalid profile. Use /profile fast or /profile rich."
-
-    preset = presets[candidate]
-    st.session_state.runtime_profile = candidate
-    st.session_state.soft_timeout_seconds = float(preset["soft_timeout_seconds"])
-    st.session_state.manual_top_k = int(preset["manual_top_k"])
-    st.session_state.show_agent_trace = bool(preset["show_agent_trace"])
-    st.session_state.response_cache = {}
-
-    if not announce:
-        return ""
-
-    trace_label = "on" if st.session_state.show_agent_trace else "off"
-    return (
-        f"Runtime profile switched to: {candidate}. "
-        f"Soft timeout={st.session_state.soft_timeout_seconds:.0f}s, "
-        f"local context top_k={st.session_state.manual_top_k}, "
-        f"agent trace={trace_label}."
-    )
+def _derive_last_entity_from_chat(chat_log: list[dict[str, str]]) -> str:
+    """Infer the last mentioned entity from recent user messages."""
+    for msg in reversed(chat_log):
+        if str(msg.get("role", "")).strip().lower() != "user":
+            continue
+        entity = _extract_entity(str(msg.get("content", "")))
+        if entity:
+            return entity
+    return ""
 
 
-def _set_trace_mode(mode: str) -> str:
-    """Enable/disable trace panels without restarting the app."""
-    candidate = (mode or "").strip().lower()
-    if candidate in {"on", "1", "true", "yes"}:
-        st.session_state.show_agent_trace = True
-    elif candidate in {"off", "0", "false", "no"}:
-        st.session_state.show_agent_trace = False
-    elif candidate in {"toggle", ""}:
-        st.session_state.show_agent_trace = not bool(
-            st.session_state.get("show_agent_trace", settings.ui_show_agent_trace)
-        )
-    else:
-        return "Invalid trace mode. Use /trace on, /trace off, or /trace toggle."
+def _set_last_entity_from_text(text: str) -> None:
+    entity = _extract_entity(text)
+    if entity:
+        st.session_state.last_entity = entity
 
-    state = "on" if st.session_state.show_agent_trace else "off"
-    return f"Agent trace is now: {state}."
+
+def _resolve_entity_with_memory(question: str) -> str:
+    """Resolve entity from current question, falling back to last remembered one."""
+    direct = _extract_entity(question)
+    if direct:
+        return direct
+    remembered = str(st.session_state.get("last_entity", "")).strip().upper()
+    return remembered
+
+
+def _cache_prompt_with_context(prompt: str) -> str:
+    """Make cache keys context-aware when a prompt relies on remembered entity."""
+    direct = _extract_entity(prompt)
+    if direct:
+        return prompt
+    remembered = str(st.session_state.get("last_entity", "")).strip().upper()
+    return f"{prompt} [entity:{remembered}]" if remembered else prompt
+
+
+def _chat_history_messages(max_messages: int = 24) -> list:
+    """Convert recent chat log entries into LangChain messages for model context."""
+    history = st.session_state.get("chat_log", [])[-max(2, max_messages) :]
+    converted: list = []
+    for msg in history:
+        role = str(msg.get("role", "")).strip().lower()
+        content = str(msg.get("content", "")).strip()
+        if not content:
+            continue
+        if role == "user":
+            converted.append(HumanMessage(content=content))
+        elif role == "assistant":
+            converted.append(AIMessage(content=content))
+    return converted
 
 
 def _inject_theme() -> None:
@@ -144,28 +184,6 @@ def _inject_theme() -> None:
             letter-spacing: 0.01em;
         }
 
-        .tcb-status-strip {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.45rem;
-            margin: 0.25rem 0 0.8rem 0;
-        }
-
-        .tcb-chip {
-            background: rgba(255, 255, 255, 0.9);
-            border: 1px solid var(--tcb-border);
-            border-radius: 999px;
-            color: var(--tcb-ink);
-            font-size: 0.78rem;
-            font-weight: 600;
-            padding: 0.18rem 0.62rem;
-            backdrop-filter: blur(2px);
-        }
-
-        .tcb-chip strong {
-            color: var(--tcb-accent);
-        }
-
         .stButton > button {
             border-radius: 11px;
             border: 1px solid #bdd7d4;
@@ -194,11 +212,26 @@ def _inject_theme() -> None:
 
 def _resolve_foundry_logo() -> Path | None:
     """Find a logo file to render for app branding."""
+    project_dir = Path(__file__).resolve().parent
+    assets_dir = project_dir / "assets"
+    configured_logo = Path(settings.foundry_logo_path)
     candidates = [
-        Path(settings.foundry_logo_path),
-        Path(__file__).resolve().parent / "assets" / "foundry-logo.svg",
-        Path(__file__).resolve().parent / "assets" / "foundry-logo.png",
+        project_dir / "image (4).png",
+        project_dir / "image (4).jpg",
+        project_dir / "image (4).jpeg",
+        project_dir / "image (4).webp",
+        project_dir / "image (4).svg",
+        configured_logo,
+        assets_dir / "image (4).png",
+        assets_dir / "image (4).jpg",
+        assets_dir / "image (4).jpeg",
+        assets_dir / "image (4).webp",
+        assets_dir / "image (4).svg",
+        assets_dir / "foundry-logo.svg",
+        assets_dir / "foundry-logo.png",
     ]
+    if not configured_logo.is_absolute():
+        candidates.insert(6, (project_dir / configured_logo))
     for path in candidates:
         if path.exists():
             return path
@@ -212,87 +245,9 @@ def _render_brand_header() -> None:
         if logo is not None:
             st.image(str(logo), width=210)
         else:
-            st.markdown("### Foundry")
+            st.markdown("### EPS")
     with col_text:
         st.title(settings.app_title)
-        st.caption(
-            "Equipment Performance Sustaining — enter an entity and the agents "
-            "check status, tickets, and yield, then escalate if needed."
-        )
-
-
-def _rag_state_label() -> str:
-    status = KNOWLEDGE_RAG.status_text().lower()
-    if "ready" in status:
-        return "ready"
-    if "not loaded yet" in status:
-        return "lazy"
-    return "degraded"
-
-
-def _render_status_strip() -> None:
-    """Show lightweight runtime state for transparency and faster debugging."""
-    style = st.session_state.get("prompt_style", "base")
-    profile = st.session_state.get("runtime_profile", "fast")
-    timeout_seconds = float(
-        st.session_state.get("soft_timeout_seconds", settings.ui_soft_timeout_seconds)
-    )
-    trace_on = bool(st.session_state.get("show_agent_trace", settings.ui_show_agent_trace))
-    llm_state = "enabled" if settings.llm_enabled else "missing key"
-    rag_state = _rag_state_label()
-    cache_items = len(st.session_state.get("response_cache", {}))
-    cache_hits = int(st.session_state.get("cache_hits", 0))
-    cache_misses = int(st.session_state.get("cache_misses", 0))
-
-    st.markdown(
-        (
-            "<div class='tcb-status-strip'>"
-            f"<span class='tcb-chip'>Style: <strong>{style}</strong></span>"
-            f"<span class='tcb-chip'>Profile: <strong>{profile}</strong></span>"
-            f"<span class='tcb-chip'>Soft timeout: <strong>{timeout_seconds:.0f}s</strong></span>"
-            f"<span class='tcb-chip'>Trace: <strong>{'on' if trace_on else 'off'}</strong></span>"
-            f"<span class='tcb-chip'>LLM: <strong>{llm_state}</strong></span>"
-            f"<span class='tcb-chip'>RAG: <strong>{rag_state}</strong></span>"
-            f"<span class='tcb-chip'>UI cache: <strong>{cache_items}</strong> ({cache_hits}H/{cache_misses}M)</span>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
-
-
-def _render_quick_actions() -> str | None:
-    """Provide single-click prompts for common actions."""
-    queued: str | None = None
-    current_style = st.session_state.get("prompt_style", "base")
-    switch_to = "natural" if current_style == "base" else "base"
-    current_profile = st.session_state.get("runtime_profile", "fast")
-    profile_target = "rich" if current_profile == "fast" else "fast"
-    trace_on = bool(st.session_state.get("show_agent_trace", settings.ui_show_agent_trace))
-    trace_target = "off" if trace_on else "on"
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        if st.button("Try DOWN entity", key="quick_down"):
-            queued = SAMPLE_DOWN_ENTITY
-    with col2:
-        if st.button("Try UP entity", key="quick_up"):
-            queued = SAMPLE_UP_ENTITY
-    with col3:
-        if st.button("System status", key="quick_status"):
-            queued = "/status"
-    with col4:
-        if st.button(f"Switch to {switch_to}", key="quick_style"):
-            queued = f"/style {switch_to}"
-
-    col5, col6 = st.columns(2)
-    with col5:
-        if st.button(f"Profile {profile_target}", key="quick_profile"):
-            queued = f"/profile {profile_target}"
-    with col6:
-        if st.button(f"Trace {trace_target}", key="quick_trace"):
-            queued = f"/trace {trace_target}"
-
-    return queued
 
 
 def _has_streamlit_context() -> bool:
@@ -321,8 +276,9 @@ def _start_graph():
         return None, str(exc)
 
 
-def _reset_state() -> None:
+def _reset_state(clear_persistent: bool = True) -> None:
     """Reset graph and chat history for a new session."""
+    st.session_state.prompt_style = "natural"
     PROJECT_DATA.reload()
     YIELD_DATASET.reload()
     MANUAL_INDEX.reload()
@@ -332,47 +288,58 @@ def _reset_state() -> None:
     st.session_state.response_cache = {}
     st.session_state.cache_hits = 0
     st.session_state.cache_misses = 0
+    st.session_state.last_entity = ""
     st.session_state.thread_id = str(uuid4())
     st.session_state.graph, st.session_state.startup_error = _start_graph()
+    if clear_persistent:
+        _clear_persistent_chat_state()
+    _save_persistent_chat_state()
 
 
 def _init_session() -> None:
     if "thread_id" not in st.session_state:
         st.session_state.thread_id = str(uuid4())
-    if "prompt_style" not in st.session_state:
-        st.session_state.prompt_style = (
-            settings.prompt_style if settings.prompt_style in {"base", "natural"} else "base"
-        )
+    # Keep Streamlit behavior aligned with CLI-style multi-step outputs.
+    st.session_state.prompt_style = "natural"
     if "response_cache" not in st.session_state:
         st.session_state.response_cache = {}
     if "cache_hits" not in st.session_state:
         st.session_state.cache_hits = 0
     if "cache_misses" not in st.session_state:
         st.session_state.cache_misses = 0
-    if "runtime_profile" not in st.session_state:
-        st.session_state.runtime_profile = "fast"
     if "soft_timeout_seconds" not in st.session_state:
         st.session_state.soft_timeout_seconds = float(settings.ui_soft_timeout_seconds)
     if "manual_top_k" not in st.session_state:
         st.session_state.manual_top_k = 2
-    if "show_agent_trace" not in st.session_state:
-        st.session_state.show_agent_trace = bool(settings.ui_show_agent_trace)
+    if "last_entity" not in st.session_state:
+        st.session_state.last_entity = ""
+
     if st.session_state.get("initialized"):
+        st.session_state.graph, st.session_state.startup_error = _start_graph()
         return
+
     st.session_state.initialized = True
-    _reset_state()
-    _apply_runtime_profile(st.session_state.runtime_profile, announce=False)
+    persisted = _load_persistent_chat_state()
+    if persisted:
+        remembered_thread = persisted.get("thread_id", "")
+        if remembered_thread:
+            st.session_state.thread_id = remembered_thread
+        st.session_state.chat_log = persisted.get("chat_log", [])
+        remembered_entity = persisted.get("last_entity", "")
+        st.session_state.last_entity = remembered_entity or _derive_last_entity_from_chat(
+            st.session_state.chat_log
+        )
 
-
-def _switch_prompt_style(style: str) -> str:
-    """Switch prompt style and rebuild the graph in-place."""
-    candidate = style.strip().lower()
-    if candidate not in {"base", "natural"}:
-        return "Invalid style. Use /style base or /style natural."
-    st.session_state.prompt_style = candidate
-    st.session_state.response_cache = {}
-    st.session_state.graph, st.session_state.startup_error = _start_graph()
-    return f"Prompt style switched to: {candidate}."
+        PROJECT_DATA.reload()
+        YIELD_DATASET.reload()
+        MANUAL_INDEX.reload()
+        KNOWLEDGE_RAG.reload()
+        st.session_state.response_cache = {}
+        st.session_state.cache_hits = 0
+        st.session_state.cache_misses = 0
+        st.session_state.graph, st.session_state.startup_error = _start_graph()
+    else:
+        _reset_state(clear_persistent=False)
 
 
 def _reload_runtime_data() -> str:
@@ -386,20 +353,209 @@ def _reload_runtime_data() -> str:
     return "Runtime data and indexes reloaded."
 
 
+def _list_preview(items: list[str], max_items: int = 12) -> str:
+    if not items:
+        return "none"
+    preview = ", ".join(items[:max_items])
+    if len(items) > max_items:
+        preview += f", ... (+{len(items) - max_items} more)"
+    return preview
+
+
+def _local_intent_reply(question: str) -> str | None:
+    """Answer common status-intent questions directly from local datasets."""
+    q = _normalize_prompt(question)
+
+    down_markers = [
+        "which entity is down",
+        "which entities are down",
+        "entity down",
+        "entities down",
+        "currently down",
+        "list down",
+        "what is down",
+        "what are down",
+    ]
+    up_markers = [
+        "which entity is up",
+        "which entities are up",
+        "entity up",
+        "entities up",
+        "currently up",
+        "list up",
+        "what is up",
+        "what are up",
+    ]
+    escalation_markers = [
+        "escalat",
+        "should be escalated",
+        "wanted to be escalated",
+        "need escalation",
+        "require escalation",
+        "requires escalation",
+        "down-tool",
+        "down tool",
+    ]
+
+    asks_down = any(marker in q for marker in down_markers)
+    asks_up = any(marker in q for marker in up_markers)
+    asks_escalation = any(marker in q for marker in escalation_markers)
+
+    if not (asks_down or asks_up or asks_escalation):
+        return None
+
+    status_rows = PROJECT_DATA.status_rows
+    if not status_rows:
+        return "I cannot read status.csv right now. Please run /reload and try again."
+
+    down_entities = sorted({r.entity for r in status_rows if r.status == "DOWN"})
+    up_entities = sorted({r.entity for r in status_rows if r.status == "UP"})
+
+    sections: list[str] = ["Here is the latest local-data snapshot:"]
+
+    if asks_down:
+        if down_entities:
+            sections.append(
+                f"● DOWN entities ({len(down_entities)}):\n\n{_list_preview(down_entities)}"
+            )
+        else:
+            sections.append("● DOWN entities:\n\nNone right now. All tracked entities are UP.")
+
+    if asks_up:
+        if up_entities:
+            sections.append(
+                f"● UP entities ({len(up_entities)}):\n\n{_list_preview(up_entities, max_items=18)}"
+            )
+        else:
+            sections.append("● UP entities:\n\nNone found in the current status dataset.")
+
+    if asks_escalation:
+        goal = float(settings.yield_threshold)
+        escalation_lines: list[str] = []
+        for row in sorted(status_rows, key=lambda x: x.entity):
+            reasons: list[str] = []
+            if row.status == "DOWN":
+                reasons.append("status is DOWN")
+            yv = YIELD_DATASET.entity_yield(row.entity)
+            if yv is not None and yv < goal:
+                reasons.append(f"yield {yv:.1f}% below {goal:.0f}%")
+            if reasons:
+                escalation_lines.append(f"- {row.entity}: {'; '.join(reasons)}")
+
+        if escalation_lines:
+            max_lines = 14
+            preview_lines = escalation_lines[:max_lines]
+            if len(escalation_lines) > max_lines:
+                preview_lines.append(f"- ... (+{len(escalation_lines) - max_lines} more)")
+            sections.append(
+                "● Entities that should be escalated now:\n\n" + "\n".join(preview_lines)
+            )
+        else:
+            sections.append(
+                "● Entities that should be escalated now:\n\n"
+                "None at the moment (no DOWN status and no yield below threshold)."
+            )
+
+    return "\n\n".join(sections)
+
+
 def _deterministic_entity_reply(question: str, reason: str = "", manual_top_k: int = 2) -> str:
-    """Return a fast local-data answer without any LLM call."""
-    entity = _extract_entity(question)
+    """Return a fast local-data answer in CLI-style section format."""
+    del manual_top_k, reason  # retained in signature for call-site compatibility
+
+    natural = _local_intent_reply(question)
+    if natural is not None:
+        return natural
+
+    entity = _resolve_entity_with_memory(question)
     if not entity:
-        note = f" ({reason})" if reason else ""
+        return "Please enter a valid entity code like TCB706 or TSX509."
+
+    key = entity.strip().upper()
+    status = (PROJECT_DATA.entity_status_value(key) or "UNKNOWN").upper()
+    yield_value = YIELD_DATASET.entity_yield(key)
+    goal = float(settings.yield_threshold)
+
+    if yield_value is None:
+        technician_text = (
+            f"The entity {key} is currently {status}, but no yield record is available. "
+            "Please refresh local data and retry."
+        )
+        summary_text = f"Checked status of {key}; yield data unavailable."
+        escalation_text = (
+            f"No escalation ticket was created for {key} because yield data is missing."
+        )
         return (
-            "Please enter a valid entity code like TCB706 or TSX509."
-            f"{note}"
+            f"● technician:\n\n{technician_text}\n\n"
+            f"Summary: {summary_text}\n\n"
+            f"● escalation:\n\n{escalation_text}"
         )
 
-    top_k = max(1, min(int(manual_top_k), 4))
-    context = get_entity_full_context.invoke({"entity": entity, "manual_top_k": top_k})
-    lines = [f"Mode: deterministic local-data fallback{f' ({reason})' if reason else ''}", context]
-    return "\n\n".join(lines)
+    yield_low = yield_value < goal
+    is_down = status == "DOWN"
+    ticket_needed = is_down or yield_low
+
+    if ticket_needed:
+        if is_down and yield_low:
+            technician_text = (
+                f"The entity {key} is currently DOWN, and it has a yield of {yield_value:.1f}%, "
+                f"which is below the acceptable threshold of {goal:.1f}%. "
+                "A down-tool ticket is required for further action."
+            )
+            summary_text = (
+                f"Checked status of {key}; tool is DOWN and yield is low, down-tool ticket needed."
+            )
+        elif is_down:
+            technician_text = (
+                f"The entity {key} is currently DOWN. "
+                f"Its latest yield is {yield_value:.1f}% against a {goal:.1f}% threshold. "
+                "A down-tool ticket is required for further action."
+            )
+            summary_text = f"Checked status of {key}; tool is DOWN, down-tool ticket needed."
+        else:
+            technician_text = (
+                f"The entity {key} is currently UP, but it has a yield of {yield_value:.1f}%, "
+                f"which is below the acceptable threshold of {goal:.1f}%. "
+                "A down-tool ticket is required for further action."
+            )
+            summary_text = f"Checked status of {key}; yield is low, down-tool ticket needed."
+
+        existing_down_ticket = next(
+            (t for t in reversed(TICKET_STORE.for_entity(key)) if t.ticket_type == "down-tool"),
+            None,
+        )
+        if existing_down_ticket is None:
+            reason_bits: list[str] = []
+            if is_down:
+                reason_bits.append("entity is DOWN")
+            if yield_low:
+                reason_bits.append(f"yield {yield_value:.1f}% below {goal:.1f}%")
+            TICKET_STORE.create(
+                entity=key,
+                ticket_type="down-tool",
+                reason="; ".join(reason_bits) or "manual review",
+            )
+
+        escalation_text = (
+            f"I created a down-tool ticket for {key} due to its low yield of {yield_value:.1f}%. "
+            "No escalation ticket was necessary."
+            if yield_low
+            else f"I created a down-tool ticket for {key} because it is currently DOWN. "
+            "No escalation ticket was necessary."
+        )
+    else:
+        technician_text = (
+            f"The entity {key} is currently UP, and its yield of {yield_value:.1f}% "
+            f"meets the acceptable threshold of {goal:.1f}%."
+        )
+        summary_text = f"Checked status of {key}; yield is healthy, no down-tool ticket needed."
+        escalation_text = f"No escalation ticket was necessary for {key}."
+
+    return (
+        f"● technician:\n\n{technician_text}\n\n"
+        f"Summary: {summary_text}\n\n"
+        f"● escalation:\n\n{escalation_text}"
+    )
 
 
 def _normalize_prompt(prompt: str) -> str:
@@ -451,7 +607,13 @@ def _cache_put(key: tuple[str, str], result: dict) -> None:
     cache[key] = payload
 
 
-def _run_graph_turn(question: str, graph, thread_id: str, fallback_manual_top_k: int) -> dict:
+def _run_graph_turn(
+    question: str,
+    graph,
+    thread_id: str,
+    fallback_manual_top_k: int,
+    history_messages: list | None = None,
+) -> dict:
     """Run one natural-style request through the graph."""
     if graph is None:
         return {
@@ -463,7 +625,19 @@ def _run_graph_turn(question: str, graph, thread_id: str, fallback_manual_top_k:
             "meta": {"path": "no-graph"},
         }
 
-    inputs = {"messages": [HumanMessage(content=question)], "next": ""}
+    inputs_messages = list(history_messages or [])
+    if not inputs_messages:
+        inputs_messages = [HumanMessage(content=question)]
+    else:
+        # Ensure latest user prompt is present in the graph input.
+        if not any(
+            getattr(msg, "type", "") == "human"
+            and str(getattr(msg, "content", "")).strip() == question.strip()
+            for msg in inputs_messages
+        ):
+            inputs_messages.append(HumanMessage(content=question))
+
+    inputs = {"messages": inputs_messages, "next": ""}
     run_config = {
         "recursion_limit": settings.recursion_limit,
         "configurable": {"thread_id": thread_id},
@@ -524,31 +698,59 @@ def _run_graph_turn(question: str, graph, thread_id: str, fallback_manual_top_k:
                 "meta": {"path": "model-error"},
             }
 
-    # A conversational reply = what the specialists and escalation said.
-    spoken = [s["content"] for s in steps]
-    if spoken:
-        reply = "\n\n".join(spoken)
-    elif steps:
-        reply = steps[-1]["content"]
+    cli_style = _format_cli_style_reply(steps)
+    if cli_style:
+        reply = cli_style
     else:
-        reply = "I didn't produce a response for that. Try rephrasing your request."
+        spoken = [s["content"] for s in steps]
+        if spoken:
+            reply = "\n\n".join(spoken)
+        elif steps:
+            reply = steps[-1]["content"]
+        else:
+            reply = "I didn't produce a response for that. Try rephrasing your request."
     return {"reply": reply, "steps": steps, "meta": {"path": "graph"}}
 
 
 def _run_turn(question: str) -> dict:
     """Run one request with fast cache checks and soft-timeout protection."""
     style = st.session_state.get("prompt_style", "base")
-    key = _cache_key(style, question)
+    _set_last_entity_from_text(question)
+    key = _cache_key(style, _cache_prompt_with_context(question))
     cached = _cache_get(key)
     if cached is not None:
         return cached
 
     started = time.perf_counter()
+
+    # Deterministic handling for status-intent prompts keeps UX fast and grounded.
+    local_intent = _local_intent_reply(question)
+    if local_intent is not None:
+        result = {
+            "reply": local_intent,
+            "steps": [{"node": "fallback", "content": local_intent}],
+            "meta": {"path": "local-intent"},
+        }
+        elapsed_ms = int(round((time.perf_counter() - started) * 1000))
+        meta = dict(result.get("meta", {}))
+        meta["latency_ms"] = elapsed_ms
+        meta["style"] = style
+        meta.setdefault("cached", False)
+        result["meta"] = meta
+        _cache_put(key, result)
+        return result
+
+    resolved_question = question
+    if not _extract_entity(question):
+        remembered = str(st.session_state.get("last_entity", "")).strip().upper()
+        if remembered:
+            resolved_question = f"{question}\n\nContext: the current entity is {remembered}."
+
     manual_top_k = max(1, min(int(st.session_state.get("manual_top_k", 2)), 4))
     if style == "base":
         # Base mode stays deterministic and local for guaranteed responsiveness.
         reply = _deterministic_entity_reply(
-            question,
+            resolved_question,
             reason="base mode",
             manual_top_k=manual_top_k,
         )
@@ -564,13 +766,21 @@ def _run_turn(question: str) -> dict:
         )
         graph = st.session_state.get("graph")
         thread_id = str(st.session_state.get("thread_id", ""))
+        history_messages = _chat_history_messages()
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="agent-turn")
-        future = pool.submit(_run_graph_turn, question, graph, thread_id, manual_top_k)
+        future = pool.submit(
+            _run_graph_turn,
+            resolved_question,
+            graph,
+            thread_id,
+            manual_top_k,
+            history_messages,
+        )
         try:
             result = future.result(timeout=timeout_seconds)
         except concurrent.futures.TimeoutError:
             reply = _deterministic_entity_reply(
-                question,
+                resolved_question,
                 reason=f"UI soft timeout ({timeout_seconds:.0f}s)",
                 manual_top_k=manual_top_k,
             )
@@ -598,11 +808,9 @@ def _runtime_status_text() -> str:
     style = st.session_state.get("prompt_style", "base")
     graph_state = "ready" if st.session_state.get("graph") is not None else "unavailable"
     llm_state = "configured" if settings.llm_enabled else "missing OPENAI_API_KEY"
-    runtime_profile = st.session_state.get("runtime_profile", "fast")
     soft_timeout = float(
         st.session_state.get("soft_timeout_seconds", settings.ui_soft_timeout_seconds)
     )
-    trace_label = "on" if st.session_state.get("show_agent_trace", settings.ui_show_agent_trace) else "off"
     cache_size = len(st.session_state.get("response_cache", {}))
     hits = int(st.session_state.get("cache_hits", 0))
     misses = int(st.session_state.get("cache_misses", 0))
@@ -610,9 +818,7 @@ def _runtime_status_text() -> str:
     return (
         "Runtime status:\n"
         f"- Prompt style: {style}\n"
-        f"- Runtime profile: {runtime_profile}\n"
         f"- Soft timeout: {soft_timeout:.0f}s\n"
-        f"- Agent trace: {trace_label}\n"
         f"- Graph: {graph_state}\n"
         f"- LLM: {llm_state}\n"
         f"- UI response cache: {cache_size} item(s), hits={hits}, misses={misses}\n"
@@ -631,31 +837,16 @@ def _handle_command(prompt: str) -> str | None:
     if lower in {"/help", "/h"}:
         return (
             "Commands:\n"
-            "- /style base\n"
-            "- /style natural\n"
-            "- /profile fast\n"
-            "- /profile rich\n"
-            "- /trace on|off|toggle\n"
+            "- /reset\n"
             "- /status\n"
             "- /rag\n"
             "- /reload"
         )
-    if lower.startswith("/style"):
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2:
-            return "Usage: /style base or /style natural"
-        return _switch_prompt_style(parts[1])
+    if lower in {"/reset", "/new", "/newchat"}:
+        _reset_state()
+        return "Conversation reset."
     if lower in {"/status", "/health"}:
         return _runtime_status_text()
-    if lower.startswith("/profile"):
-        parts = text.split(maxsplit=1)
-        if len(parts) < 2:
-            return "Usage: /profile fast or /profile rich"
-        return _apply_runtime_profile(parts[1])
-    if lower.startswith("/trace"):
-        parts = text.split(maxsplit=1)
-        mode = parts[1] if len(parts) > 1 else "toggle"
-        return _set_trace_mode(mode)
     if lower == "/rag":
         return KNOWLEDGE_RAG.status_text()
     if lower in {"/reload", "/refresh"}:
@@ -663,36 +854,23 @@ def _handle_command(prompt: str) -> str | None:
     return None
 
 
-def _meta_caption(meta: dict) -> str:
-    pieces: list[str] = []
-    path = str(meta.get("path", "")).strip()
-    if path:
-        pieces.append(f"path={path}")
-    latency_ms = meta.get("latency_ms")
-    if isinstance(latency_ms, int):
-        pieces.append(f"latency={latency_ms}ms")
-    if meta.get("cached"):
-        pieces.append("cache=hit")
-    return " | ".join(pieces)
-
-
 def _render_assistant(message: dict) -> None:
-    """Render assistant reply with optional runtime metadata and node trace."""
+    """Render assistant reply with clean, user-facing output only."""
     st.markdown(message.get("content", ""))
-    meta = message.get("meta") or {}
-    caption = _meta_caption(meta)
-    if caption:
-        st.caption(caption)
 
-    steps = message.get("steps") or []
-    show_trace = bool(st.session_state.get("show_agent_trace", settings.ui_show_agent_trace))
-    if show_trace and steps:
-        with st.expander("Agent trace", expanded=False):
-            for step in steps:
-                node = step.get("node", "")
-                label = NODE_LABELS.get(node, node)
-                st.markdown(f"**{label}**")
-                st.markdown(step.get("content", ""))
+
+def _format_cli_style_reply(steps: list[dict[str, str]]) -> str:
+    """Match the concise CLI-style sections shown in image (2)."""
+    blocks: list[str] = []
+    for step in steps:
+        node = step.get("node", "").strip().lower()
+        if node in {"", "status_check", "fallback"}:
+            continue
+        content = step.get("content", "").strip()
+        if not content:
+            continue
+        blocks.append(f"● {node}:\n\n{content}")
+    return "\n\n".join(blocks)
 
 
 def main() -> None:
@@ -701,21 +879,11 @@ def main() -> None:
     _inject_theme()
 
     _render_brand_header()
-    _render_status_strip()
 
-    top_left, top_right = st.columns([4, 1])
-    with top_left:
-        st.caption(
-            "Enter an entity code — status routes it to Agent Technician (DOWN) or Agent Yield (UP). "
-            f"Style: {st.session_state.prompt_style}. "
-            "Use /style, /profile, /trace, /status, /rag, /reload, or /help."
-        )
-    with top_right:
-        if st.button("New Chat"):
-            _reset_state()
-            st.rerun()
-
-    queued_prompt = _render_quick_actions()
+    st.caption("Input entity > (for example: TCB706)")
+    if st.button("New Chat"):
+        _reset_state()
+        st.rerun()
 
     if st.session_state.startup_error:
         st.warning(st.session_state.startup_error)
@@ -727,15 +895,12 @@ def main() -> None:
             else:
                 st.markdown(message["content"])
 
-    prompt = st.chat_input(
-        "Input entity (e.g. TCB706)..."
-    )
-    if not prompt and queued_prompt:
-        prompt = queued_prompt
+    prompt = st.chat_input("Input entity (e.g. TCB706)...")
     if not prompt:
         return
 
     st.session_state.chat_log.append({"role": "user", "content": prompt})
+    _save_persistent_chat_state()
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -748,16 +913,14 @@ def main() -> None:
             "meta": {"path": "command"},
         }
         st.session_state.chat_log.append(command_message)
+        _save_persistent_chat_state()
         with st.chat_message("assistant"):
             _render_assistant(command_message)
         st.rerun()
         return
 
     with st.chat_message("assistant"):
-        if st.session_state.get("prompt_style", "base") == "natural":
-            with st.spinner("Coordinating specialist agents..."):
-                result = _run_turn(prompt)
-        else:
+        with st.spinner("Coordinating specialist agents..."):
             result = _run_turn(prompt)
         _render_assistant(
             {
@@ -775,6 +938,7 @@ def main() -> None:
             "meta": result.get("meta", {}),
         }
     )
+    _save_persistent_chat_state()
     st.rerun()
 
 
