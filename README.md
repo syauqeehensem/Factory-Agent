@@ -88,24 +88,43 @@ python -m streamlit run chat_ui.py
 
 6. Open the shown local URL in your browser (usually `http://localhost:8501`).
 
-## Optional performance boost: 100,000-question memory layer
-
-If you want broader natural question coverage, generate the question-memory file once:
+Alternative web UI (HTML, CSS, JavaScript + Python backend):
 
 ```bash
-python tools/generate_question_memory.py --count 100000 --seed 42
+python chat_web_api.py
+```
+
+Then open:
+
+- `http://127.0.0.1:8502`
+
+Alternative desktop app (no Streamlit):
+
+```bash
+python chat_desktop_alt.py
+```
+
+This opens a desktop chatbot window using Tkinter.
+
+## Add PDF knowledge so answers are grounded with citations
+
+Use your course PDF (or any internal PDF playbook) to build a local knowledge index:
+
+```bash
+python tools/build_pdf_knowledge.py --pdf "..\\..\\Advanced LLM for the Manufacturing Industry.pdf"
 ```
 
 This creates:
 
-- `memory_layer/questions_100k.jsonl`
+- `knowledge_layer/course_knowledge.jsonl`
 
-Then restart the app (or run `/reload` in chat). The app will use this file as a
-question-memory layer for intent recognition.
+Then run `/reload` in chat (or restart app). The chatbot can now answer broad
+questions using indexed PDF chunks and show citations.
 
-Useful command:
+Useful commands:
 
-- `/memory` - shows question-memory layer status
+- `/knowledge` - shows PDF knowledge index status
+- `/ask <question>` - returns a concise grounded answer with citations
 
 ## Example questions you can try
 
@@ -122,6 +141,8 @@ Type these in the chat box:
 - `/help` - show available commands
 - `/status` - show runtime and data health
 - `/rag` - show RAG/index status
+- `/knowledge` - show PDF knowledge index status
+- `/ask <question>` - grounded answer with citations
 - `/reload` - reload local data
 - `/reset` - clear current conversation
 
@@ -182,6 +203,9 @@ python tests/eval_reasoning.py --count 100 --style natural --attempt-live --out-
 - `QUESTION_MEMORY_PATH`
 - `QUESTION_MEMORY_ENABLED`
 - `QUESTION_MEMORY_MAX_ITEMS`
+- `KNOWLEDGE_CHUNKS_PATH`
+- `KNOWLEDGE_ENABLED`
+- `KNOWLEDGE_TOP_K`
 
 ### Key files
 
@@ -190,6 +214,8 @@ python tests/eval_reasoning.py --count 100 --style natural --attempt-live --out-
 - `factory_agent/tools.py` - integrated read/action tools and entity context
 - `factory_agent/knowledge_rag.py` - CSV/manual retrieval and query cache
 - `factory_agent/manual_data.py` - manual indexing and search cache
+- `factory_agent/pdf_knowledge.py` - PDF knowledge index and citation answers
 - `factory_agent/project_data.py` - status and ticket CSV adapters
 - `factory_agent/yield_data.py` - per-entity yield checks
 - `chat_ui.py` - Streamlit frontend
+- `tools/build_pdf_knowledge.py` - build JSONL knowledge chunks from PDF files
